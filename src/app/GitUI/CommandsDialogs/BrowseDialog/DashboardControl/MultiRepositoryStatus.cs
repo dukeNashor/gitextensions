@@ -373,6 +373,46 @@ internal sealed record MultiRepositoryStatusLayout
     public List<string> GroupOrder { get; init; } = [];
     public Dictionary<string, List<string>> RepositoryOrder { get; init; } = new(StringComparer.OrdinalIgnoreCase);
     public HashSet<string> CollapsedGroups { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+    public MultiRepositoryStatusViewMode ViewMode { get; set; }
+    public List<MultiRepositoryStatusColumn> ColumnOrder { get; init; } = [.. MultiRepositoryStatusLayout.DefaultColumnOrder];
+    public Dictionary<MultiRepositoryStatusColumn, int> ColumnWidths { get; init; } = [];
+    public MultiRepositoryStatusColumn? SortColumn { get; set; }
+    public MultiRepositoryStatusSortDirection SortDirection { get; set; }
+
+    public static IReadOnlyList<MultiRepositoryStatusColumn> DefaultColumnOrder { get; } =
+    [
+        MultiRepositoryStatusColumn.Name,
+        MultiRepositoryStatusColumn.Branch,
+        MultiRepositoryStatusColumn.WorkingTree,
+        MultiRepositoryStatusColumn.Synchronization,
+        MultiRepositoryStatusColumn.LastFetch,
+        MultiRepositoryStatusColumn.Checked,
+        MultiRepositoryStatusColumn.Path
+    ];
+}
+
+internal enum MultiRepositoryStatusViewMode
+{
+    Tile,
+    Details
+}
+
+internal enum MultiRepositoryStatusColumn
+{
+    Name,
+    Branch,
+    WorkingTree,
+    Synchronization,
+    LastFetch,
+    Checked,
+    Path
+}
+
+internal enum MultiRepositoryStatusSortDirection
+{
+    None,
+    Ascending,
+    Descending
 }
 
 internal sealed class MultiRepositoryStatusLayoutCache
@@ -401,7 +441,16 @@ internal sealed class MultiRepositoryStatusLayoutCache
                         pair => pair.Key,
                         pair => pair.Value.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
                         StringComparer.OrdinalIgnoreCase),
-                    CollapsedGroups = new HashSet<string>(layout.CollapsedGroups, StringComparer.OrdinalIgnoreCase)
+                    CollapsedGroups = new HashSet<string>(layout.CollapsedGroups, StringComparer.OrdinalIgnoreCase),
+                    ViewMode = Enum.IsDefined(layout.ViewMode) ? layout.ViewMode : MultiRepositoryStatusViewMode.Tile,
+                    ColumnOrder = NormalizeColumnOrder(layout.ColumnOrder),
+                    ColumnWidths = layout.ColumnWidths
+                        .Where(pair => Enum.IsDefined(pair.Key) && pair.Value > 0)
+                        .ToDictionary(pair => pair.Key, pair => Math.Clamp(pair.Value, 40, 2000)),
+                    SortColumn = layout.SortColumn is { } sortColumn && Enum.IsDefined(sortColumn) ? sortColumn : null,
+                    SortDirection = layout.SortColumn is not null && Enum.IsDefined(layout.SortDirection)
+                        ? layout.SortDirection
+                        : MultiRepositoryStatusSortDirection.None
                 };
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
@@ -423,6 +472,18 @@ internal sealed class MultiRepositoryStatusLayoutCache
         {
             // The status view remains usable when its optional layout cannot be persisted.
         }
+    }
+
+    private static List<MultiRepositoryStatusColumn> NormalizeColumnOrder(IEnumerable<MultiRepositoryStatusColumn>? columns)
+    {
+        List<MultiRepositoryStatusColumn> result = [MultiRepositoryStatusColumn.Name];
+        if (columns is not null)
+        {
+            result.AddRange(columns.Where(column => Enum.IsDefined(column) && column != MultiRepositoryStatusColumn.Name).Distinct());
+        }
+
+        result.AddRange(MultiRepositoryStatusLayout.DefaultColumnOrder.Where(column => !result.Contains(column)));
+        return result;
     }
 }
 

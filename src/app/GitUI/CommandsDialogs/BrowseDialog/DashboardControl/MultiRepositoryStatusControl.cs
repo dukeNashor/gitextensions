@@ -24,6 +24,8 @@ internal sealed class MultiRepositoryStatusControl : GitExtensionsControl
     private readonly Button _refreshAllButton = new() { AutoSize = true, Text = "Check all repositories" };
     private readonly Button _refreshButton = new() { AutoSize = true, Text = "Check selected" };
     private readonly TextBox _searchBox = new() { PlaceholderText = "Search repositories, paths, groups or branches", Width = 230 };
+    private readonly RadioButton _tileViewButton = new() { Appearance = Appearance.Button, AutoSize = true, Text = "Tiles" };
+    private readonly RadioButton _detailsViewButton = new() { Appearance = Appearance.Button, AutoSize = true, Text = "Details" };
     private readonly Label _titleLabel = new() { AutoSize = true, Text = "Repository status overview" };
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 1000 };
     private readonly CancellationTokenSource _lifetimeCancellation = new();
@@ -68,6 +70,9 @@ internal sealed class MultiRepositoryStatusControl : GitExtensionsControl
         _fetchButton.Click += (_, _) => this.InvokeAndForget(FetchSelectedAsync, cancellationToken: _lifetimeCancellation.Token);
         _fetchAllButton.Click += (_, _) => this.InvokeAndForget(() => FetchRepositoriesAsync(_repositories, isAutomatic: false), cancellationToken: _lifetimeCancellation.Token);
         _resetOrderingButton.Click += (_, _) => _repositoryView.ResetOrdering();
+        _tileViewButton.Click += (_, _) => _repositoryView.SetViewMode(MultiRepositoryStatusViewMode.Tile);
+        _detailsViewButton.Click += (_, _) => _repositoryView.SetViewMode(MultiRepositoryStatusViewMode.Details);
+        _repositoryView.ViewModeChanged += (_, _) => UpdateViewButtons();
         _searchBox.TextChanged += (_, _) => _repositoryView.SetSearchText(_searchBox.Text);
         _repositoryView.RepositoryActivated += (_, _) => OpenSelectedRepository();
         _repositoryView.RefreshSelectedRequested += (_, _) => this.InvokeAndForget(RefreshSelectedAsync, cancellationToken: _lifetimeCancellation.Token);
@@ -161,6 +166,8 @@ internal sealed class MultiRepositoryStatusControl : GitExtensionsControl
             _refreshAllButton,
             _fetchButton,
             _fetchAllButton,
+            _tileViewButton,
+            _detailsViewButton,
             _resetOrderingButton,
             _searchBox,
             _operationLabel]);
@@ -170,7 +177,15 @@ internal sealed class MultiRepositoryStatusControl : GitExtensionsControl
         Dock = DockStyle.Fill;
         AutoScaleMode = AutoScaleMode.Dpi;
 
+        UpdateViewButtons();
+
         ResumeLayout(performLayout: true);
+    }
+
+    private void UpdateViewButtons()
+    {
+        _tileViewButton.Checked = _repositoryView.ViewMode == MultiRepositoryStatusViewMode.Tile;
+        _detailsViewButton.Checked = _repositoryView.ViewMode == MultiRepositoryStatusViewMode.Details;
     }
 
     private async Task InitializeAsync()

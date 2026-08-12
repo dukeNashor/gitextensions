@@ -22,9 +22,11 @@ internal sealed class MultiRepositoryStatusView : GitExtensionsControl
     private readonly TableLayoutPanel _emptyState = new();
     private readonly Label _emptyTitle = new() { AutoSize = true, Text = "No repositories" };
     private readonly ImageList _images = new();
+    private readonly ImageList _smallImages = new();
     private readonly ListView _list = new();
     private readonly MultiRepositoryStatusLayoutCache _layoutCache = new();
     private readonly ContextMenuStrip _categoriseMenu = new();
+    private readonly ContextMenuStrip _columnMenu = new();
     private readonly TranslationString _branchTooltipText = new("Branch: {0}");
     private readonly TranslationString _checkedTooltipText = new("Checked: {0}");
     private readonly TranslationString _checkFailedText = new("Check failed");
@@ -42,6 +44,7 @@ internal sealed class MultiRepositoryStatusView : GitExtensionsControl
     private readonly TranslationString _synchronizationTooltipText = new("Synchronization: {0}");
     private readonly TranslationString _uncategorisedText = new("Uncategorised");
     private readonly TranslationString _workingTreeTooltipText = new("Working tree: {0}");
+    private readonly TranslationString _resetColumnsText = new("Reset column layout");
 
     private Dictionary<string, MultiRepositoryStatus> _statuses = new(MultiRepositoryStatusRepositories.PathComparer);
     private List<Repository> _repositories = [];
@@ -62,11 +65,19 @@ internal sealed class MultiRepositoryStatusView : GitExtensionsControl
     private Point _groupDragStart;
     private bool _groupDragging;
     private bool _rebuilding;
+    private bool _updatingColumns;
+    private readonly bool _persistLayout;
 
     public MultiRepositoryStatusView()
+        : this(layout: null)
+    {
+    }
+
+    internal MultiRepositoryStatusView(MultiRepositoryStatusLayout? layout)
     {
         Name = nameof(MultiRepositoryStatusView);
-        _layout = _layoutCache.Load();
+        _persistLayout = layout is null;
+        _layout = layout ?? _layoutCache.Load();
         _secondaryFont = new Font(AppSettings.Font.FontFamily, Math.Max(6, AppSettings.Font.SizeInPoints - 1f));
         InitializeUi();
         WireEvents();
@@ -78,6 +89,9 @@ internal sealed class MultiRepositoryStatusView : GitExtensionsControl
     public event EventHandler? RepositoryActivated;
     public event EventHandler? SelectedRepositoryChanged;
     public event EventHandler? ReturnToTraditionalRequested;
+    public event EventHandler? ViewModeChanged;
+
+    public MultiRepositoryStatusViewMode ViewMode => _layout.ViewMode;
 
     public Repository? SelectedRepository
         => _list.SelectedItems.Count == 0 ? null : _list.SelectedItems[0].Tag as Repository;
@@ -133,6 +147,13 @@ internal sealed class MultiRepositoryStatusView : GitExtensionsControl
 
     public void RefreshRelativeTimes()
     {
+        if (_layout.ViewMode == MultiRepositoryStatusViewMode.Details)
+        {
+            RebuildItems();
+            EnsureSelectedRepositoryVisible();
+            return;
+        }
+
         foreach (ListViewItem item in _list.Items)
         {
             if (item.Tag is Repository repository)
@@ -149,9 +170,31 @@ internal sealed class MultiRepositoryStatusView : GitExtensionsControl
     {
         _layout.GroupOrder.Clear();
         _layout.RepositoryOrder.Clear();
+        _layout.SortColumn = null;
+        _layout.SortDirection = MultiRepositoryStatusSortDirection.None;
         SynchronizeLayout();
         SaveLayout();
         RebuildItems();
+    }
+
+    public void SetViewMode(MultiRepositoryStatusViewMode viewMode)
+    {
+        if (_layout.ViewMode == viewMode)
+        {
+            return;
+        }
+
+        if (_layout.ViewMode == MultiRepositoryStatusViewMode.Details)
+        {
+            CaptureColumnLayout();
+        }
+
+        _layout.ViewMode = viewMode;
+        ConfigureListViewMode();
+        SaveLayout();
+        RebuildItems();
+        EnsureSelectedRepositoryVisible();
+        ViewModeChanged?.Invoke(this, EventArgs.Empty);
     }
 
     protected override void Dispose(bool disposing)
@@ -160,7 +203,9 @@ internal sealed class MultiRepositoryStatusView : GitExtensionsControl
         {
             _secondaryFont.Dispose();
             _images.Dispose();
+            _smallImages.Dispose();
             _categoriseMenu.Dispose();
+            _columnMenu.Dispose();
         }
 
         base.Dispose(disposing);
@@ -174,20 +219,23 @@ internal sealed class MultiRepositoryStatusView : GitExtensionsControl
         _images.ImageSize = DpiUtil.Scale(new Size(32, 32));
         _images.Images.Add(Images.DashboardFolderGit);
         _images.Images.Add(Images.DashboardFolderError);
+        _smallImages.ColorDepth = ColorDepth.Depth32Bit;
+        _smallImages.ImageSize = DpiUtil.Scale(new Size(16, 16));
+        _smallImages.Images.Add(Images.DashboardFolderGit);
+        _smallImages.Images.Add(Images.DashboardFolderError);
 
         _list.AllowDrop = true;
         _list.BorderStyle = BorderStyle.None;
         _list.Dock = DockStyle.Fill;
         _list.FullRowSelect = true;
-        _list.HeaderStyle = ColumnHeaderStyle.None;
         _list.HideSelection = false;
         _list.LargeImageList = _images;
+        _list.SmallImageList = _smallImages;
         _list.MultiSelect = false;
-        _list.OwnerDraw = true;
         _list.ShowGroups = true;
         _list.ShowItemToolTips = true;
         _list.UseCompatibleStateImageBehavior = false;
-        _list.View = View.Tile;
+        ConfigureListViewMode();
 
         _emptyTitle.Font = new Font(AppSettings.Font, FontStyle.Bold);
         _emptyIcon.Image = DpiUtil.Scale(Images.DashboardFolderGit);
@@ -224,6 +272,11 @@ internal sealed class MultiRepositoryStatusView : GitExtensionsControl
     {
         _emptyBackButton.Click += (_, _) => ReturnToTraditionalRequested?.Invoke(this, EventArgs.Empty);
         _list.DrawItem += List_DrawItem;
+        _list.DrawColumnHeader += (_, e) => e.DrawDefault = true;
+        _list.DrawSubItem += List_DrawSubItem;
+        _list.ColumnClick += List_ColumnClick;
+        _list.ColumnReordered += List_ColumnReordered;
+        _list.ColumnWidthChanged += List_ColumnWidthChanged;
         _list.ItemActivate += (_, _) => RepositoryActivated?.Invoke(this, EventArgs.Empty);
         _list.ItemDrag += List_ItemDrag;
         _list.DragOver += List_DragOver;
@@ -237,6 +290,182 @@ internal sealed class MultiRepositoryStatusView : GitExtensionsControl
         _list.MouseClick += List_MouseClick;
         _list.MouseLeave += (_, _) => SetHoveredItem(null);
         Resize += (_, _) => UpdateTileSize();
+    }
+
+    private void ConfigureListViewMode()
+    {
+        _updatingColumns = true;
+        try
+        {
+            _list.BeginUpdate();
+            _list.Columns.Clear();
+            if (_layout.ViewMode == MultiRepositoryStatusViewMode.Tile)
+            {
+                _list.HeaderStyle = ColumnHeaderStyle.None;
+                _list.OwnerDraw = true;
+                _list.View = View.Tile;
+                UpdateTileSize();
+                return;
+            }
+
+            _list.OwnerDraw = true;
+            _list.View = View.Details;
+            _list.HeaderStyle = ColumnHeaderStyle.Clickable;
+            foreach (MultiRepositoryStatusColumn column in _layout.ColumnOrder)
+            {
+                ColumnHeader header = new()
+                {
+                    Text = GetColumnText(column),
+                    Tag = column,
+                    Width = _layout.ColumnWidths.TryGetValue(column, out int width) ? DpiUtil.Scale(width) : GetInitialColumnWidth(column)
+                };
+                _list.Columns.Add(header);
+            }
+
+            UpdateColumnHeaders();
+        }
+        finally
+        {
+            _list.EndUpdate();
+            _updatingColumns = false;
+        }
+    }
+
+    private static string GetColumnText(MultiRepositoryStatusColumn column)
+        => column switch
+        {
+            MultiRepositoryStatusColumn.Name => "Name",
+            MultiRepositoryStatusColumn.Branch => "Branch",
+            MultiRepositoryStatusColumn.WorkingTree => "Working tree",
+            MultiRepositoryStatusColumn.Synchronization => "Synchronization",
+            MultiRepositoryStatusColumn.LastFetch => "Last fetch",
+            MultiRepositoryStatusColumn.Checked => "Checked",
+            MultiRepositoryStatusColumn.Path => "Path",
+            _ => column.ToString()
+        };
+
+    private static int GetDefaultColumnWidth(MultiRepositoryStatusColumn column)
+        => DpiUtil.Scale(column switch
+        {
+            MultiRepositoryStatusColumn.Name => 210,
+            MultiRepositoryStatusColumn.Branch => 150,
+            MultiRepositoryStatusColumn.WorkingTree => 190,
+            MultiRepositoryStatusColumn.Synchronization => 190,
+            MultiRepositoryStatusColumn.LastFetch => 220,
+            MultiRepositoryStatusColumn.Checked => 145,
+            MultiRepositoryStatusColumn.Path => 360,
+            _ => 120
+        });
+
+    private int GetInitialColumnWidth(MultiRepositoryStatusColumn column)
+    {
+        if (column != MultiRepositoryStatusColumn.Path)
+        {
+            return GetDefaultColumnWidth(column);
+        }
+
+        int otherColumnsWidth = _layout.ColumnOrder
+            .Where(candidate => candidate != MultiRepositoryStatusColumn.Path)
+            .Sum(candidate => _layout.ColumnWidths.TryGetValue(candidate, out int width) ? DpiUtil.Scale(width) : GetDefaultColumnWidth(candidate));
+        return Math.Max(DpiUtil.Scale(180), _list.ClientSize.Width - otherColumnsWidth - SystemInformation.VerticalScrollBarWidth);
+    }
+
+    private void CaptureColumnLayout()
+    {
+        if (_list.View != View.Details || _list.Columns.Count == 0)
+        {
+            return;
+        }
+
+        _layout.ColumnOrder.Clear();
+        foreach (ColumnHeader header in _list.Columns.Cast<ColumnHeader>().OrderBy(header => header.DisplayIndex))
+        {
+            if (header.Tag is MultiRepositoryStatusColumn column)
+            {
+                _layout.ColumnOrder.Add(column);
+                _layout.ColumnWidths[column] = Math.Max(40, ToLogicalPixels(header.Width));
+            }
+        }
+    }
+
+    private void List_ColumnWidthChanged(object? sender, ColumnWidthChangedEventArgs e)
+    {
+        if (_updatingColumns || _list.Columns[e.ColumnIndex].Tag is not MultiRepositoryStatusColumn column)
+        {
+            return;
+        }
+
+        _layout.ColumnWidths[column] = Math.Max(40, ToLogicalPixels(_list.Columns[e.ColumnIndex].Width));
+        SaveLayout();
+    }
+
+    private void List_ColumnReordered(object? sender, ColumnReorderedEventArgs e)
+    {
+        if (_updatingColumns || e.Header?.Tag is MultiRepositoryStatusColumn.Name || e.NewDisplayIndex == 0)
+        {
+            e.Cancel = true;
+            return;
+        }
+
+        BeginInvoke(() =>
+        {
+            CaptureColumnLayout();
+            ConfigureListViewMode();
+            SaveLayout();
+            RebuildItems();
+        });
+    }
+
+    private void List_ColumnClick(object? sender, ColumnClickEventArgs e)
+    {
+        if (!string.IsNullOrEmpty(_searchText) || _list.Columns[e.Column].Tag is not MultiRepositoryStatusColumn column)
+        {
+            return;
+        }
+
+        if (_layout.SortColumn != column || _layout.SortDirection == MultiRepositoryStatusSortDirection.None)
+        {
+            _layout.SortColumn = column;
+            _layout.SortDirection = MultiRepositoryStatusSortDirection.Ascending;
+        }
+        else if (_layout.SortDirection == MultiRepositoryStatusSortDirection.Ascending)
+        {
+            _layout.SortDirection = MultiRepositoryStatusSortDirection.Descending;
+        }
+        else
+        {
+            _layout.SortColumn = null;
+            _layout.SortDirection = MultiRepositoryStatusSortDirection.None;
+        }
+
+        SaveLayout();
+        UpdateColumnHeaders();
+        RebuildItems();
+        EnsureSelectedRepositoryVisible();
+    }
+
+    private int ToLogicalPixels(int pixels)
+        => Math.Max(1, (int)Math.Round(pixels * 96d / Math.Max(96, DeviceDpi)));
+
+    private void UpdateColumnHeaders()
+    {
+        foreach (ColumnHeader header in _list.Columns)
+        {
+            if (header.Tag is not MultiRepositoryStatusColumn column)
+            {
+                continue;
+            }
+
+            string suffix = _layout.SortColumn == column
+                ? _layout.SortDirection switch
+                {
+                    MultiRepositoryStatusSortDirection.Ascending => " ▲",
+                    MultiRepositoryStatusSortDirection.Descending => " ▼",
+                    _ => ""
+                }
+                : "";
+            header.Text = GetColumnText(column) + suffix;
+        }
     }
 
     private void SynchronizeLayout()
@@ -330,6 +559,7 @@ internal sealed class MultiRepositoryStatusView : GitExtensionsControl
                         Tag = repository,
                         ToolTipText = BuildToolTip(repository, status)
                     };
+                    PopulateDetailsSubItems(item, repository, status);
                     _list.Items.Add(item);
                     if (_selectedPath is not null && PathsEqual(_selectedPath, repository.Path))
                     {
@@ -345,14 +575,34 @@ internal sealed class MultiRepositoryStatusView : GitExtensionsControl
             _rebuilding = false;
         }
 
+        RestoreSelection();
+
         bool isEmpty = _repositories.Count == 0;
         _emptyState.Visible = isEmpty;
         _list.Visible = !isEmpty;
         UpdateTileSize();
+        EnsureSelectedRepositoryVisible();
         SelectedRepositoryChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private IEnumerable<Repository> GetOrderedRepositories(string groupKey)
+    {
+        IEnumerable<Repository> repositories = GetManuallyOrderedRepositories(groupKey);
+        if (_layout.ViewMode == MultiRepositoryStatusViewMode.Details
+            && _layout.SortColumn is { } sortColumn
+            && _layout.SortDirection != MultiRepositoryStatusSortDirection.None)
+        {
+            repositories = _layout.SortDirection == MultiRepositoryStatusSortDirection.Ascending
+                ? repositories.OrderBy(repository => GetSortKey(repository, sortColumn), MultiRepositoryStatusSortKeyComparer.Instance)
+                    .ThenBy(GetRepositoryName, StringComparer.CurrentCultureIgnoreCase)
+                : repositories.OrderByDescending(repository => GetSortKey(repository, sortColumn), MultiRepositoryStatusSortKeyComparer.Instance)
+                    .ThenBy(GetRepositoryName, StringComparer.CurrentCultureIgnoreCase);
+        }
+
+        return repositories;
+    }
+
+    private IEnumerable<Repository> GetManuallyOrderedRepositories(string groupKey)
     {
         if (GroupKeysEqual(groupKey, UnclassifiedGroupKey))
         {
@@ -385,6 +635,73 @@ internal sealed class MultiRepositoryStatusView : GitExtensionsControl
         }
     }
 
+    private void PopulateDetailsSubItems(ListViewItem item, Repository repository, MultiRepositoryStatus? status)
+    {
+        if (_layout.ViewMode != MultiRepositoryStatusViewMode.Details)
+        {
+            return;
+        }
+
+        item.Text = GetColumnValue(repository, status, _layout.ColumnOrder[0]);
+        foreach (MultiRepositoryStatusColumn column in _layout.ColumnOrder.Skip(1))
+        {
+            item.SubItems.Add(GetColumnValue(repository, status, column));
+        }
+    }
+
+    private string GetColumnValue(Repository repository, MultiRepositoryStatus? status, MultiRepositoryStatusColumn column)
+        => column switch
+        {
+            MultiRepositoryStatusColumn.Name => GetRepositoryName(repository),
+            MultiRepositoryStatusColumn.Branch => string.IsNullOrWhiteSpace(status?.Branch) ? _noBranchText.Text : status.Branch,
+            MultiRepositoryStatusColumn.WorkingTree => status?.StatusError is { Length: > 0 } ? _checkFailedText.Text : MultiRepositoryStatusPresentation.FormatWorkingTree(status),
+            MultiRepositoryStatusColumn.Synchronization => status?.FetchError is { Length: > 0 }
+                ? _fetchFailedText.Text
+                : string.Join(" · ", MultiRepositoryStatusPresentation.GetSynchronizationLabels(status).Select(label => label.Text)),
+            MultiRepositoryStatusColumn.LastFetch => MultiRepositoryStatusPresentation.FormatFetchTimestamp(status?.LastFetchUtc, DateTimeOffset.UtcNow),
+            MultiRepositoryStatusColumn.Checked => MultiRepositoryStatusPresentation.FormatCheckedTimestamp(status?.LastCheckedUtc),
+            MultiRepositoryStatusColumn.Path => repository.Path,
+            _ => ""
+        };
+
+    private MultiRepositoryStatusSortKey GetSortKey(Repository repository, MultiRepositoryStatusColumn column)
+    {
+        _statuses.TryGetValue(repository.Path, out MultiRepositoryStatus? status);
+        return column switch
+        {
+            MultiRepositoryStatusColumn.Name => new(0, GetRepositoryName(repository)),
+            MultiRepositoryStatusColumn.Branch => new(0, status?.Branch ?? ""),
+            MultiRepositoryStatusColumn.Path => new(0, repository.Path),
+            MultiRepositoryStatusColumn.LastFetch => new(0, status?.LastFetchUtc ?? DateTimeOffset.MinValue),
+            MultiRepositoryStatusColumn.Checked => new(0, status?.LastCheckedUtc ?? DateTimeOffset.MinValue),
+            MultiRepositoryStatusColumn.WorkingTree => new(GetWorkingTreeSeverity(status), GetColumnValue(repository, status, column)),
+            MultiRepositoryStatusColumn.Synchronization => new(GetSynchronizationSeverity(status), GetColumnValue(repository, status, column)),
+            _ => new(0, "")
+        };
+    }
+
+    private static int GetWorkingTreeSeverity(MultiRepositoryStatus? status)
+        => status switch
+        {
+            { StatusError: not null } => 0,
+            { HasWorkingTreeChanges: true } => 1,
+            not null => 2,
+            _ => 3
+        };
+
+    private static int GetSynchronizationSeverity(MultiRepositoryStatus? status)
+        => status switch
+        {
+            { FetchError: not null } => 0,
+            { Ahead: > 0, Behind: > 0 } => 1,
+            { Behind: > 0 } => 2,
+            { Ahead: > 0 } => 3,
+            { IsDetached: true } => 5,
+            { Upstream: null or "" } => 4,
+            not null => 6,
+            _ => 7
+        };
+
     private bool MatchesSearch(Repository repository)
     {
         if (string.IsNullOrEmpty(_searchText))
@@ -401,6 +718,11 @@ internal sealed class MultiRepositoryStatusView : GitExtensionsControl
 
     private void List_DrawItem(object? sender, DrawListViewItemEventArgs e)
     {
+        if (_layout.ViewMode == MultiRepositoryStatusViewMode.Details)
+        {
+            return;
+        }
+
         if (e.Item.Tag is not Repository repository)
         {
             return;
@@ -496,6 +818,65 @@ internal sealed class MultiRepositoryStatusView : GitExtensionsControl
         }
     }
 
+    private void List_DrawSubItem(object? sender, DrawListViewSubItemEventArgs e)
+    {
+        ListViewItem? item = e.Item;
+        ListViewItem.ListViewSubItem? subItem = e.SubItem;
+        if (_layout.ViewMode != MultiRepositoryStatusViewMode.Details || item?.Tag is not Repository repository || subItem is null)
+        {
+            e.DrawDefault = true;
+            return;
+        }
+
+        bool selected = item.Selected;
+        Color backColor = selected ? SystemColors.Highlight : _list.BackColor;
+        Color textColor = selected ? SystemColors.HighlightText : _list.ForeColor;
+        using SolidBrush background = new(backColor);
+        e.Graphics.FillRectangle(background, e.Bounds);
+
+        int padding = DpiUtil.Scale(5);
+        Rectangle contentBounds = Rectangle.Inflate(e.Bounds, -padding, 0);
+        if (e.ColumnIndex == 0)
+        {
+            int imageSize = _smallImages.ImageSize.Width;
+            _smallImages.Draw(e.Graphics, contentBounds.Left, e.Bounds.Top + Math.Max(0, (e.Bounds.Height - imageSize) / 2), item.ImageIndex);
+            contentBounds.X += imageSize + padding;
+            contentBounds.Width = Math.Max(0, contentBounds.Width - imageSize - padding);
+        }
+
+        MultiRepositoryStatusColumn? column = e.Header?.Tag as MultiRepositoryStatusColumn?;
+        _statuses.TryGetValue(repository.Path, out MultiRepositoryStatus? status);
+        MultiRepositorySyncLabelKind? labelKind = column switch
+        {
+            MultiRepositoryStatusColumn.WorkingTree when status?.StatusError is not null => MultiRepositorySyncLabelKind.Error,
+            MultiRepositoryStatusColumn.WorkingTree when status is null => MultiRepositorySyncLabelKind.Neutral,
+            MultiRepositoryStatusColumn.WorkingTree when status.HasWorkingTreeChanges => MultiRepositorySyncLabelKind.Behind,
+            MultiRepositoryStatusColumn.WorkingTree => MultiRepositorySyncLabelKind.Synchronized,
+            MultiRepositoryStatusColumn.Synchronization when status?.FetchError is not null => MultiRepositorySyncLabelKind.Error,
+            MultiRepositoryStatusColumn.Synchronization => MultiRepositoryStatusPresentation.GetSynchronizationLabels(status).FirstOrDefault()?.Kind,
+            _ => null
+        };
+
+        if (labelKind is { } kind)
+        {
+            int offset = 0;
+            RevisionGridRefRenderer.DrawRef(selected, _secondaryFont, ref offset, subItem.Text, GetLabelColor(kind), RefLabelIcon.None,
+                contentBounds, e.Graphics, fill: true);
+        }
+        else
+        {
+            TextRenderer.DrawText(e.Graphics, subItem.Text, AppSettings.Font, contentBounds, textColor,
+                TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter);
+        }
+
+        if (_dropTargetPath is not null && PathsEqual(_dropTargetPath, repository.Path) && e.ColumnIndex == 0)
+        {
+            using Pen pen = new(_theme.AccentedText, Math.Max(2, DpiUtil.Scale(2)));
+            int lineY = _dropAfter ? item.Bounds.Bottom - 1 : item.Bounds.Top + 1;
+            e.Graphics.DrawLine(pen, item.Bounds.Left + padding, lineY, item.Bounds.Right - padding, lineY);
+        }
+    }
+
     private void DrawError(Graphics graphics, bool selected, MultiRepositoryStatus? status, Rectangle bounds)
     {
         string? error = status?.FetchError ?? status?.StatusError;
@@ -582,6 +963,11 @@ internal sealed class MultiRepositoryStatusView : GitExtensionsControl
             return;
         }
 
+        if (!IsUncategorised(repository) && IsColumnSortingActive)
+        {
+            return;
+        }
+
         _draggedRepositoryPath = repository.Path;
         _list.DoDragDrop(item, DragDropEffects.Move);
         _draggedRepositoryPath = null;
@@ -625,15 +1011,19 @@ internal sealed class MultiRepositoryStatusView : GitExtensionsControl
             return;
         }
 
+        if (IsColumnSortingActive)
+        {
+            ClearItemDropTarget();
+            return;
+        }
+
         if (target?.Tag is not Repository targetRepository || !GroupKeysEqual(GetGroupKey(sourceRepository), GetGroupKey(targetRepository)))
         {
             ClearItemDropTarget();
             return;
         }
 
-        _dropAfter = point.Y > target.Bounds.Top + (target.Bounds.Height / 2)
-            || (Math.Abs(point.Y - (target.Bounds.Top + (target.Bounds.Height / 2))) < target.Bounds.Height / 3
-                && point.X > target.Bounds.Left + (target.Bounds.Width / 2));
+        _dropAfter = IsDropAfter(point, target.Bounds, _layout.ViewMode);
         _dropTargetGroupKey = targetGroupKey;
         _dropTargetPath = targetRepository.Path;
         e.Effect = DragDropEffects.Move;
@@ -679,10 +1069,41 @@ internal sealed class MultiRepositoryStatusView : GitExtensionsControl
 
     private void List_MouseClick(object? sender, MouseEventArgs e)
     {
+        if (e.Button == MouseButtons.Right
+            && _layout.ViewMode == MultiRepositoryStatusViewMode.Details
+            && e.Y <= GetDetailsHeaderHeight())
+        {
+            ShowColumnMenu(e.Location);
+            return;
+        }
+
         if (e.Button == MouseButtons.Right && _list.GetItemAt(e.X, e.Y)?.Tag is Repository repository)
         {
             ShowCategoriseMenu(repository, e.Location);
         }
+    }
+
+    private int GetDetailsHeaderHeight()
+        => TextRenderer.MeasureText("Ag", _list.Font, Size.Empty, TextFormatFlags.NoPadding).Height + DpiUtil.Scale(9);
+
+    private void ShowColumnMenu(Point location)
+    {
+        _columnMenu.Items.Clear();
+        ToolStripMenuItem resetColumns = new(_resetColumnsText.Text);
+        resetColumns.Click += (_, _) => ResetColumnLayout();
+        _columnMenu.Items.Add(resetColumns);
+        _columnMenu.Show(_list, location);
+    }
+
+    internal void ResetColumnLayout()
+    {
+        _layout.ColumnOrder.Clear();
+        _layout.ColumnOrder.AddRange(MultiRepositoryStatusLayout.DefaultColumnOrder);
+        _layout.ColumnWidths.Clear();
+        ConfigureListViewMode();
+        SaveLayout();
+        RebuildItems();
+        EnsureSelectedRepositoryVisible();
     }
 
     private void ShowCategoriseMenu(Repository repository, Point location)
@@ -779,6 +1200,10 @@ internal sealed class MultiRepositoryStatusView : GitExtensionsControl
         {
             SetGroupCollapsedState(_pressedGroupKey, !_pressedGroupWasCollapsed);
         }
+        else if (e.Button == MouseButtons.Left && _list.GetItemAt(e.X, e.Y) is null)
+        {
+            RestoreSelection();
+        }
 
         _pressedGroupKey = null;
         _groupDropTargetKey = null;
@@ -788,7 +1213,7 @@ internal sealed class MultiRepositoryStatusView : GitExtensionsControl
 
     private void MoveRepository(Repository repository, int direction)
     {
-        if (IsUncategorised(repository))
+        if (IsUncategorised(repository) || IsColumnSortingActive)
         {
             return;
         }
@@ -950,6 +1375,11 @@ internal sealed class MultiRepositoryStatusView : GitExtensionsControl
 
     private void UpdateTileSize()
     {
+        if (_layout.ViewMode != MultiRepositoryStatusViewMode.Tile)
+        {
+            return;
+        }
+
         int padding = DpiUtil.Scale(12);
         int available = Math.Max(DpiUtil.Scale(280), _list.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - padding);
         int minimumWidth = DpiUtil.Scale(440);
@@ -959,7 +1389,58 @@ internal sealed class MultiRepositoryStatusView : GitExtensionsControl
     }
 
     private void SaveLayout()
-        => _layoutCache.Save(_layout);
+    {
+        if (_persistLayout)
+        {
+            _layoutCache.Save(_layout);
+        }
+    }
+
+    private bool IsColumnSortingActive
+        => _layout.ViewMode == MultiRepositoryStatusViewMode.Details
+            && _layout.SortColumn is not null
+            && _layout.SortDirection != MultiRepositoryStatusSortDirection.None;
+
+    internal static bool IsDropAfter(Point point, Rectangle itemBounds, MultiRepositoryStatusViewMode viewMode)
+        => point.Y > itemBounds.Top + (itemBounds.Height / 2)
+            || (viewMode == MultiRepositoryStatusViewMode.Tile
+                && Math.Abs(point.Y - (itemBounds.Top + (itemBounds.Height / 2))) < itemBounds.Height / 3
+                && point.X > itemBounds.Left + (itemBounds.Width / 2));
+
+    private void EnsureSelectedRepositoryVisible()
+    {
+        if (_selectedPath is null)
+        {
+            return;
+        }
+
+        foreach (ListViewItem item in _list.Items)
+        {
+            if (item.Tag is Repository repository && PathsEqual(repository.Path, _selectedPath))
+            {
+                item.EnsureVisible();
+                return;
+            }
+        }
+    }
+
+    private void RestoreSelection()
+    {
+        if (_selectedPath is null)
+        {
+            return;
+        }
+
+        foreach (ListViewItem item in _list.Items)
+        {
+            if (item.Tag is Repository repository && PathsEqual(repository.Path, _selectedPath))
+            {
+                item.Selected = true;
+                item.Focused = true;
+                return;
+            }
+        }
+    }
 
     private static string GetGroupKey(Repository repository)
         => string.IsNullOrWhiteSpace(repository.Category) ? UnclassifiedGroupKey : repository.Category.Trim();
@@ -1067,4 +1548,27 @@ internal sealed class MultiRepositoryCategoriseEventArgs(Repository repository, 
 internal sealed class MultiRepositoryRepositoryEventArgs(Repository repository) : EventArgs
 {
     public Repository Repository { get; } = repository;
+}
+
+internal readonly record struct MultiRepositoryStatusSortKey(int Severity, object Value);
+
+internal sealed class MultiRepositoryStatusSortKeyComparer : IComparer<MultiRepositoryStatusSortKey>
+{
+    public static MultiRepositoryStatusSortKeyComparer Instance { get; } = new();
+
+    public int Compare(MultiRepositoryStatusSortKey x, MultiRepositoryStatusSortKey y)
+    {
+        int severity = x.Severity.CompareTo(y.Severity);
+        if (severity != 0)
+        {
+            return severity;
+        }
+
+        if (x.Value is DateTimeOffset xTimestamp && y.Value is DateTimeOffset yTimestamp)
+        {
+            return xTimestamp.CompareTo(yTimestamp);
+        }
+
+        return StringComparer.CurrentCultureIgnoreCase.Compare(Convert.ToString(x.Value), Convert.ToString(y.Value));
+    }
 }
