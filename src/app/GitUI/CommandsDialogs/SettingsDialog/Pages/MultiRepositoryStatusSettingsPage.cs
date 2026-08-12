@@ -7,7 +7,7 @@ internal sealed partial class MultiRepositoryStatusSettingsPage : SettingsPageWi
     private readonly CheckBox _autoFetchEnabled = new()
     {
         AutoSize = true,
-        Text = "系统空闲时自动 Fetch 收藏仓库"
+        Text = "Automatically fetch repositories while the system is idle"
     };
 
     private readonly NumericUpDown _idleMinutes = CreateNumberControl(1, 1440);
@@ -15,21 +15,25 @@ internal sealed partial class MultiRepositoryStatusSettingsPage : SettingsPageWi
     private readonly NumericUpDown _concurrency = CreateNumberControl(1, 16);
     private readonly NumericUpDown _timeoutSeconds = CreateNumberControl(10, 3600);
     private readonly TableLayoutPanel _settingsTable = new();
+    private readonly Label _concurrencyLabel = CreateSettingLabel("Maximum concurrent repositories");
+    private readonly Label _explanation = new()
+    {
+        AutoSize = true,
+        MaximumSize = new Size(700, 0),
+        Text = "The overview checks categorised repositories and valid uncategorised repositories from recent history. Automatic and manual fetches access all remotes configured for every repository in the overview."
+    };
+    private readonly Label _fetchIntervalLabel = CreateSettingLabel("Repeat after this many minutes while idle");
+    private readonly Label _idleMinutesLabel = CreateSettingLabel("Start after this many idle minutes");
+    private readonly Label _timeoutLabel = CreateSettingLabel("Fetch timeout per repository in seconds");
 
     public MultiRepositoryStatusSettingsPage(IServiceProvider serviceProvider)
         : base(serviceProvider)
     {
-        Text = "仓库状态总览";
+        Name = nameof(MultiRepositoryStatusSettingsPage);
+        Text = "Repository status overview";
         AutoScroll = true;
         Dock = DockStyle.Fill;
         Padding = new Padding(12);
-
-        Label explanation = new()
-        {
-            AutoSize = true,
-            MaximumSize = new Size(700, 0),
-            Text = "总览仅检查收藏仓库。自动和手动 Fetch 都会访问每个仓库配置的全部远端。"
-        };
 
         _settingsTable.AutoSize = true;
         _settingsTable.AutoSizeMode = AutoSizeMode.GrowAndShrink;
@@ -40,13 +44,13 @@ internal sealed partial class MultiRepositoryStatusSettingsPage : SettingsPageWi
         _settingsTable.Padding = new Padding(0, 12, 0, 0);
         _settingsTable.Controls.Add(_autoFetchEnabled, 0, 0);
         _settingsTable.SetColumnSpan(_autoFetchEnabled, 2);
-        AddSettingRow(1, "系统空闲多少分钟后开始", _idleMinutes);
-        AddSettingRow(2, "持续空闲时每隔多少分钟执行", _fetchIntervalMinutes);
-        AddSettingRow(3, "最大并发仓库数", _concurrency);
-        AddSettingRow(4, "单仓库 Fetch 超时秒数", _timeoutSeconds);
+        AddSettingRow(1, _idleMinutesLabel, _idleMinutes);
+        AddSettingRow(2, _fetchIntervalLabel, _fetchIntervalMinutes);
+        AddSettingRow(3, _concurrencyLabel, _concurrency);
+        AddSettingRow(4, _timeoutLabel, _timeoutSeconds);
 
         Controls.Add(_settingsTable);
-        Controls.Add(explanation);
+        Controls.Add(_explanation);
         _autoFetchEnabled.CheckedChanged += (_, _) => UpdateEnabledState();
         InitializeComplete();
     }
@@ -81,15 +85,18 @@ internal sealed partial class MultiRepositoryStatusSettingsPage : SettingsPageWi
             TextAlign = HorizontalAlignment.Right
         };
 
-    private void AddSettingRow(int row, string text, Control control)
-    {
-        _settingsTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        _settingsTable.Controls.Add(new Label
+    private static Label CreateSettingLabel(string text)
+        => new()
         {
             AutoSize = true,
             Margin = new Padding(24, 8, 12, 3),
             Text = text
-        }, 0, row);
+        };
+
+    private void AddSettingRow(int row, Label label, Control control)
+    {
+        _settingsTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        _settingsTable.Controls.Add(label, 0, row);
         control.Margin = new Padding(3, 4, 3, 3);
         _settingsTable.Controls.Add(control, 1, row);
     }

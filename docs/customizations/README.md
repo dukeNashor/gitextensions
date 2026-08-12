@@ -25,7 +25,7 @@ git log --reverse --oneline 501f831e..HEAD
 
 ## 当前魔改
 
-- [收藏仓库状态总览](multi-repository-status-overview.md)：首页集中检查收藏仓库、展示同步状态，并在系统空闲时 Fetch 全部远端。
+- [仓库状态总览](multi-repository-status-overview.md)：首页集中检查已分类仓库与最近未分类仓库、展示同步状态，并在系统空闲时 Fetch 全部远端。
 
 ## 维护方式
 

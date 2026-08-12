@@ -13,21 +13,21 @@ public sealed class MultiRepositoryStatusPresentationTests
 
         string formatted = MultiRepositoryStatusPresentation.FormatFetchTimestamp(timestamp, Now);
 
-        formatted.Should().Be($"5 分钟前（{timestamp.ToLocalTime():yyyy-MM-dd HH:mm}）");
+        formatted.Should().Be($"5 minutes ago ({timestamp.ToLocalTime():yyyy-MM-dd HH:mm})");
     }
 
-    [TestCase(30, "刚刚")]
-    [TestCase(120, "2 分钟前")]
-    [TestCase(7_200, "2 小时前")]
-    [TestCase(172_800, "2 天前")]
-    [TestCase(3_456_000, "1 个月前")]
-    [TestCase(63_072_000, "2 年前")]
+    [TestCase(30, "Just now")]
+    [TestCase(120, "2 minutes ago")]
+    [TestCase(7_200, "2 hours ago")]
+    [TestCase(172_800, "2 days ago")]
+    [TestCase(3_456_000, "1 month ago")]
+    [TestCase(63_072_000, "2 years ago")]
     public void FormatRelativeTime_uses_confirmed_thresholds(int elapsedSeconds, string expected)
         => MultiRepositoryStatusPresentation.FormatRelativeTime(Now.AddSeconds(-elapsedSeconds), Now).Should().Be(expected);
 
     [Test]
     public void FormatRelativeTime_treats_future_timestamp_as_just_now()
-        => MultiRepositoryStatusPresentation.FormatRelativeTime(Now.AddMinutes(5), Now).Should().Be("刚刚");
+        => MultiRepositoryStatusPresentation.FormatRelativeTime(Now.AddMinutes(5), Now).Should().Be("Just now");
 
     [Test]
     public void GetSynchronizationLabels_reports_diverged_ahead_and_behind()
@@ -42,7 +42,7 @@ public sealed class MultiRepositoryStatusPresentationTests
 
         MultiRepositoryStatusPresentation.GetSynchronizationLabels(status)
             .Select(label => label.Text)
-            .Should().Equal("已分叉", "领先 2", "落后 3");
+            .Should().Equal("Diverged", "Ahead 2", "Behind 3");
     }
 
     [Test]
@@ -56,7 +56,7 @@ public sealed class MultiRepositoryStatusPresentationTests
             Behind = 0
         };
 
-        MultiRepositoryStatusPresentation.GetSynchronizationLabels(status).Single().Text.Should().Be("已同步");
+        MultiRepositoryStatusPresentation.GetSynchronizationLabels(status).Single().Text.Should().Be("Synchronized");
     }
 
     [Test]

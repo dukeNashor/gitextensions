@@ -5,6 +5,8 @@ using GitCommands;
 using GitCommands.UserRepositoryHistory;
 using GitExtensions.Extensibility;
 using GitExtensions.Extensibility.Git;
+using GitExtensions.Extensibility.Translations;
+using ResourceManager;
 
 namespace GitUI.CommandsDialogs.BrowseDialog.DashboardControl;
 
@@ -35,7 +37,7 @@ internal sealed record MultiRepositoryFetchResult(bool Succeeded, bool Skipped, 
 {
     public static MultiRepositoryFetchResult Success(DateTimeOffset fetchedUtc) => new(true, false, fetchedUtc, null);
     public static MultiRepositoryFetchResult Failure(string error) => new(false, false, null, error);
-    public static MultiRepositoryFetchResult Busy() => new(false, true, null, "仓库正忙，已跳过本次 Fetch。");
+    public static MultiRepositoryFetchResult Busy() => new(false, true, null, MultiRepositoryStatusProviderStrings.RepositoryBusy);
 }
 
 internal interface IMultiRepositoryStatusProvider
@@ -55,13 +57,13 @@ internal sealed class MultiRepositoryStatusProvider(IGitExecutorProvider executo
 
         if (!Directory.Exists(path))
         {
-            return ErrorStatus("仓库目录不存在。");
+            return ErrorStatus(MultiRepositoryStatusProviderStrings.DirectoryMissing);
         }
 
         bool isBare = GitModule.IsBareRepository(path);
         if (!isBare && !GitModule.IsValidGitWorkingDir(path))
         {
-            return ErrorStatus("该目录不是 Git 仓库。");
+            return ErrorStatus(MultiRepositoryStatusProviderStrings.NotGitRepository);
         }
 
         try
@@ -108,7 +110,7 @@ internal sealed class MultiRepositoryStatusProvider(IGitExecutorProvider executo
 
         if (!Directory.Exists(path) || (!GitModule.IsBareRepository(path) && !GitModule.IsValidGitWorkingDir(path)))
         {
-            return MultiRepositoryFetchResult.Failure("该目录不是 Git 仓库。");
+            return MultiRepositoryFetchResult.Failure(MultiRepositoryStatusProviderStrings.NotGitRepository);
         }
 
         IGitExecutor executor = _executorProvider.GetExecutor(path);
@@ -133,7 +135,7 @@ internal sealed class MultiRepositoryStatusProvider(IGitExecutorProvider executo
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return MultiRepositoryFetchResult.Failure($"Fetch 在 {timeout.TotalSeconds:0} 秒后超时。");
+            return MultiRepositoryFetchResult.Failure(string.Format(MultiRepositoryStatusProviderStrings.FetchTimedOut, timeout.TotalSeconds));
         }
         catch (OperationCanceledException)
         {
@@ -307,6 +309,24 @@ internal sealed class MultiRepositoryStatusProvider(IGitExecutorProvider executo
     }
 }
 
+internal sealed class MultiRepositoryStatusProviderStrings : Translate
+{
+    private static readonly Lazy<MultiRepositoryStatusProviderStrings> Instance = new(() => new());
+
+    private readonly TranslationString _directoryMissing = new("The repository directory does not exist.");
+    private readonly TranslationString _fetchTimedOut = new("Fetch timed out after {0:0} seconds.");
+    private readonly TranslationString _notGitRepository = new("The directory is not a Git repository.");
+    private readonly TranslationString _repositoryBusy = new("The repository is busy. Fetch was skipped.");
+
+    private MultiRepositoryStatusProviderStrings()
+        => Translator.Translate(this, AppSettings.CurrentTranslation);
+
+    public static string DirectoryMissing => Instance.Value._directoryMissing.Text;
+    public static string FetchTimedOut => Instance.Value._fetchTimedOut.Text;
+    public static string NotGitRepository => Instance.Value._notGitRepository.Text;
+    public static string RepositoryBusy => Instance.Value._repositoryBusy.Text;
+}
+
 internal sealed class MultiRepositoryStatusCache
 {
     private const string CacheFileName = "MultiRepositoryStatusCache.json";
@@ -324,7 +344,7 @@ internal sealed class MultiRepositoryStatusCache
             }
 
             List<MultiRepositoryStatus>? statuses = JsonSerializer.Deserialize<List<MultiRepositoryStatus>>(File.ReadAllText(CacheFilePath), JsonOptions);
-            return (statuses ?? []).ToDictionary(status => status.RepositoryPath, StringComparer.OrdinalIgnoreCase);
+            return (statuses ?? []).ToDictionary(status => status.RepositoryPath, MultiRepositoryStatusRepositories.PathComparer);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {

@@ -14,24 +14,33 @@ internal sealed class MultiRepositoryStatusControl : GitExtensionsControl
 {
     private static readonly TimeSpan LocalRefreshInterval = TimeSpan.FromMinutes(1);
 
-    private readonly Button _fetchAllButton = new() { AutoSize = true, Text = "Fetch 全部" };
-    private readonly Button _fetchButton = new() { AutoSize = true, Text = "Fetch 选中" };
+    private readonly Button _fetchAllButton = new() { AutoSize = true, Text = "Fetch all repositories" };
+    private readonly Button _fetchButton = new() { AutoSize = true, Text = "Fetch selected" };
     private readonly FlowLayoutPanel _headerActions = new();
     private readonly Label _operationLabel = new() { AutoSize = true, Margin = new Padding(12, 7, 3, 3) };
-    private readonly Button _openButton = new() { AutoSize = true, Text = "打开" };
+    private readonly Button _openButton = new() { AutoSize = true, Text = "Open" };
     private readonly MultiRepositoryStatusView _repositoryView = new();
-    private readonly Button _resetOrderingButton = new() { AutoSize = true, Text = "重置排序" };
-    private readonly Button _refreshAllButton = new() { AutoSize = true, Text = "刷新全部" };
-    private readonly Button _refreshButton = new() { AutoSize = true, Text = "刷新选中" };
-    private readonly TextBox _searchBox = new() { PlaceholderText = "搜索项目、路径、分类或分支", Width = 230 };
-    private readonly Label _titleLabel = new() { AutoSize = true, Text = "仓库状态总览" };
+    private readonly Button _resetOrderingButton = new() { AutoSize = true, Text = "Reset ordering" };
+    private readonly Button _refreshAllButton = new() { AutoSize = true, Text = "Check all repositories" };
+    private readonly Button _refreshButton = new() { AutoSize = true, Text = "Check selected" };
+    private readonly TextBox _searchBox = new() { PlaceholderText = "Search repositories, paths, groups or branches", Width = 230 };
+    private readonly Label _titleLabel = new() { AutoSize = true, Text = "Repository status overview" };
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 1000 };
     private readonly CancellationTokenSource _lifetimeCancellation = new();
     private readonly MultiRepositoryStatusCache _cache = new();
     private readonly MultiRepositoryFetchSchedule _fetchSchedule = new();
     private readonly ISystemIdleTimeProvider _idleTimeProvider;
+    private readonly TranslationString _cachedResultsText = new("Showing cached results and refreshing...");
+    private readonly TranslationString _categoriseFailedCaption = new("Could not categorise repository");
+    private readonly TranslationString _categoriseFailedText = new("The repository could not be moved to group '{0}'.\n\n{1}");
+    private readonly TranslationString _checkingRepositoryText = new("Checking {0}...");
+    private readonly TranslationString _checkingText = new("Checking local repository status...");
+    private readonly TranslationString _fetchingAllText = new("Fetching all remotes...");
+    private readonly TranslationString _fetchingIdleText = new("System is idle. Fetching repositories...");
+    private readonly TranslationString _groupNoLongerExistsText = new("The target group no longer exists.");
+    private readonly TranslationString _repositoryCountText = new("{0} repositories · {1} uncategorised");
 
-    private Dictionary<string, MultiRepositoryStatus> _statuses = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, MultiRepositoryStatus> _statuses = new(MultiRepositoryStatusRepositories.PathComparer);
     private List<Repository> _repositories = [];
     private IMultiRepositoryStatusProvider? _statusProvider;
     private DateTimeOffset _lastLocalRefreshUtc;
@@ -49,6 +58,7 @@ internal sealed class MultiRepositoryStatusControl : GitExtensionsControl
     internal MultiRepositoryStatusControl(ISystemIdleTimeProvider idleTimeProvider)
     {
         _idleTimeProvider = idleTimeProvider;
+        Name = nameof(MultiRepositoryStatusControl);
         InitializeUi();
         InitializeComplete();
 
@@ -63,6 +73,8 @@ internal sealed class MultiRepositoryStatusControl : GitExtensionsControl
         _repositoryView.RefreshSelectedRequested += (_, _) => this.InvokeAndForget(RefreshSelectedAsync, cancellationToken: _lifetimeCancellation.Token);
         _repositoryView.ReturnToTraditionalRequested += (_, _) => RepositoriesRequested?.Invoke(this, EventArgs.Empty);
         _repositoryView.SelectedRepositoryChanged += (_, _) => UpdateButtonState();
+        _repositoryView.CategoriseRequested += (_, e) => this.InvokeAndForget(() => CategoriseAsync(e.Repository, e.Category), cancellationToken: _lifetimeCancellation.Token);
+        _repositoryView.AddCategoryRequested += (_, e) => AddCategory(e.Repository);
         _timer.Tick += Timer_Tick;
     }
 
@@ -164,13 +176,13 @@ internal sealed class MultiRepositoryStatusControl : GitExtensionsControl
     private async Task InitializeAsync()
     {
         IReadOnlyDictionary<string, MultiRepositoryStatus> cachedStatuses = await Task.Run(_cache.Load, _lifetimeCancellation.Token);
-        IList<Repository> repositories = await RepositoryHistoryManager.Locals.LoadFavouriteHistoryAsync();
+        List<Repository> repositories = await LoadRepositoriesAsync();
         await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(_lifetimeCancellation.Token);
 
-        _repositories = NormalizeRepositories(repositories);
+        _repositories = repositories;
         _statuses = cachedStatuses
             .Where(pair => _repositories.Any(repository => PathsEqual(repository.Path, pair.Key)))
-            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+            .ToDictionary(pair => pair.Key, pair => pair.Value, MultiRepositoryStatusRepositories.PathComparer);
         _initialized = true;
         RenderRows(cached: _statuses.Count != 0);
         await RefreshAllAsync(reloadRepositories: false);
@@ -183,13 +195,12 @@ internal sealed class MultiRepositoryStatusControl : GitExtensionsControl
             return;
         }
 
-        SetBusy(true, "正在刷新本地状态…");
+        SetBusy(true, _checkingText.Text);
         try
         {
             if (reloadRepositories)
             {
-                IList<Repository> repositories = await RepositoryHistoryManager.Locals.LoadFavouriteHistoryAsync();
-                _repositories = NormalizeRepositories(repositories);
+                _repositories = await LoadRepositoriesAsync();
             }
 
             IReadOnlyList<MultiRepositoryStatus> results = (await GetStatusesAsync(_repositories, _lifetimeCancellation.Token))
@@ -217,7 +228,7 @@ internal sealed class MultiRepositoryStatusControl : GitExtensionsControl
             return;
         }
 
-        SetBusy(true, $"正在刷新 {GetRepositoryName(repository)}…");
+        SetBusy(true, string.Format(_checkingRepositoryText.Text, GetRepositoryName(repository)));
         try
         {
             DateTimeOffset? lastFetchUtc = GetLastFetchUtc(repository.Path);
@@ -248,7 +259,7 @@ internal sealed class MultiRepositoryStatusControl : GitExtensionsControl
             return;
         }
 
-        SetBusy(true, isAutomatic ? "系统空闲，正在 Fetch…" : "正在 Fetch 全部远端…");
+        SetBusy(true, isAutomatic ? _fetchingIdleText.Text : _fetchingAllText.Text);
         int concurrency = Math.Clamp(AppSettings.MultiRepositoryStatusFetchConcurrency, 1, 16);
         TimeSpan timeout = TimeSpan.FromSeconds(Math.Clamp(AppSettings.MultiRepositoryStatusFetchTimeoutSeconds, 10, 3600));
         using SemaphoreSlim gate = new(concurrency);
@@ -381,14 +392,87 @@ internal sealed class MultiRepositoryStatusControl : GitExtensionsControl
 
     private async Task ReloadRepositoriesAsync()
     {
-        IList<Repository> repositories = await RepositoryHistoryManager.Locals.LoadFavouriteHistoryAsync();
-        _repositories = NormalizeRepositories(repositories);
+        _repositories = await LoadRepositoriesAsync();
+    }
+
+    private static async Task<List<Repository>> LoadRepositoriesAsync()
+    {
+        Task<IList<Repository>> recentTask = RepositoryHistoryManager.Locals.LoadRecentHistoryAsync();
+        Task<IList<Repository>> categorisedTask = RepositoryHistoryManager.Locals.LoadFavouriteHistoryAsync();
+        await Task.WhenAll(recentTask, categorisedTask);
+        return MultiRepositoryStatusRepositories.Combine(
+            await recentTask,
+            await categorisedTask,
+            path => GitModule.IsValidGitWorkingDir(path) || GitModule.IsBareRepository(path));
+    }
+
+    private void AddCategory(Repository repository)
+    {
+        List<string> categories = [.. _repositories
+            .Select(candidate => candidate.Category?.Trim())
+            .Where(category => !string.IsNullOrWhiteSpace(category))
+            .Select(category => category!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.CurrentCultureIgnoreCase)];
+        using FormDashboardCategoryTitle dialog = new(categories);
+        if (dialog.ShowDialog(this) == DialogResult.OK && dialog.Category is { } category)
+        {
+            this.InvokeAndForget(
+                () => CategoriseAsync(repository, category, requireExistingCategory: false),
+                cancellationToken: _lifetimeCancellation.Token);
+        }
+    }
+
+    private async Task CategoriseAsync(Repository repository, string category, bool requireExistingCategory = true)
+    {
+        if (_operationInProgress || string.IsNullOrWhiteSpace(category))
+        {
+            return;
+        }
+
+        SetBusy(true, string.Format(_checkingRepositoryText.Text, GetRepositoryName(repository)));
+        try
+        {
+            IList<Repository> storedRepositories = await RepositoryHistoryManager.Locals.LoadFavouriteHistoryAsync();
+            string? currentCategory = storedRepositories
+                .Select(candidate => candidate.Category?.Trim())
+                .FirstOrDefault(candidate => string.Equals(candidate, category, StringComparison.OrdinalIgnoreCase));
+            if (requireExistingCategory && currentCategory is null)
+            {
+                throw new InvalidOperationException(_groupNoLongerExistsText.Text);
+            }
+
+            Repository repositoryToCategorise = storedRepositories
+                .FirstOrDefault(candidate => PathsEqual(candidate.Path, repository.Path))
+                ?? repository;
+            await RepositoryHistoryManager.Locals.AssignCategoryAsync(repositoryToCategorise, currentCategory ?? category.Trim());
+            _repositories = await LoadRepositoriesAsync();
+            _repositoryView.SelectRepository(repository.Path);
+            MergeStatuses([]);
+            RenderRows(cached: false);
+            SaveCache();
+        }
+        catch (Exception ex)
+        {
+            MessageBoxes.Show(this,
+                string.Format(_categoriseFailedText.Text, category, ex.Message),
+                _categoriseFailedCaption.Text,
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+            _repositories = await LoadRepositoriesAsync();
+            RenderRows(cached: false);
+        }
+        finally
+        {
+            SetBusy(false, "");
+        }
     }
 
     private void MergeStatuses(IEnumerable<MultiRepositoryStatus> statuses)
     {
-        HashSet<string> currentPaths = new(_repositories.Select(repository => repository.Path), StringComparer.OrdinalIgnoreCase);
-        foreach (string stalePath in _statuses.Keys.Where(path => !currentPaths.Contains(path)).ToList())
+        foreach (string stalePath in _statuses.Keys
+                     .Where(path => !_repositories.Any(repository => PathsEqual(repository.Path, path)))
+                     .ToList())
         {
             _statuses.Remove(stalePath);
         }
@@ -406,8 +490,8 @@ internal sealed class MultiRepositoryStatusControl : GitExtensionsControl
         if (!_operationInProgress)
         {
             _operationLabel.Text = cached && _statuses.Count != 0
-                ? "正在显示缓存结果并刷新…"
-                : $"{_repositories.Count} 个收藏仓库";
+                ? _cachedResultsText.Text
+                : GetRepositoryCountText();
         }
 
         UpdateButtonState();
@@ -424,7 +508,7 @@ internal sealed class MultiRepositoryStatusControl : GitExtensionsControl
     private void SetBusy(bool busy, string operation)
     {
         _operationInProgress = busy;
-        _operationLabel.Text = busy ? operation : $"{_repositories.Count} 个收藏仓库";
+        _operationLabel.Text = busy ? operation : GetRepositoryCountText();
         UseWaitCursor = busy;
         UpdateButtonState();
     }
@@ -464,10 +548,8 @@ internal sealed class MultiRepositoryStatusControl : GitExtensionsControl
     private DateTimeOffset? GetLastFetchUtc(string path)
         => _statuses.TryGetValue(path, out MultiRepositoryStatus? status) ? status.LastFetchUtc : null;
 
-    private static List<Repository> NormalizeRepositories(IEnumerable<Repository> repositories)
-        => [.. repositories
-            .Where(repository => !string.IsNullOrWhiteSpace(repository.Path))
-            .DistinctBy(repository => repository.Path, StringComparer.OrdinalIgnoreCase)];
+    private string GetRepositoryCountText()
+        => string.Format(_repositoryCountText.Text, _repositories.Count, _repositories.Count(repository => string.IsNullOrWhiteSpace(repository.Category)));
 
     private static string GetRepositoryName(Repository repository)
     {
@@ -476,9 +558,7 @@ internal sealed class MultiRepositoryStatusControl : GitExtensionsControl
     }
 
     private static bool PathsEqual(string left, string right)
-        => string.Equals(left.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-                         right.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-                         StringComparison.OrdinalIgnoreCase);
+        => MultiRepositoryStatusRepositories.PathsEqual(left, right);
 
     private static TimeSpan GetConfiguredIdleTime()
         => TimeSpan.FromMinutes(Math.Clamp(AppSettings.MultiRepositoryStatusIdleMinutes, 1, 24 * 60));

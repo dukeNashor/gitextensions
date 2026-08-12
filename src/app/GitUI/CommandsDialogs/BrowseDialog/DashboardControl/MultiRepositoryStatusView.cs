@@ -11,21 +11,39 @@ using ResourceManager;
 
 namespace GitUI.CommandsDialogs.BrowseDialog.DashboardControl;
 
-internal sealed class MultiRepositoryStatusView : UserControl
+internal sealed class MultiRepositoryStatusView : GitExtensionsControl
 {
     private const string UnclassifiedGroupKey = "__gitextensions_unclassified__";
     private static readonly PropertyInfo? ListViewGroupAccessibilityObjectProperty = typeof(ListViewGroup).GetProperty("AccessibilityObject", BindingFlags.Instance | BindingFlags.NonPublic);
 
-    private readonly Button _emptyBackButton = new() { AutoSize = true, Text = "回到传统视图" };
-    private readonly Label _emptyDescription = new() { AutoSize = true, Text = "请在传统视图中将仓库设为收藏。" };
+    private readonly Button _emptyBackButton = new() { AutoSize = true, Text = "Return to traditional view" };
+    private readonly Label _emptyDescription = new() { AutoSize = true, Text = "Open a repository or categorise one in the traditional view." };
     private readonly PictureBox _emptyIcon = new() { SizeMode = PictureBoxSizeMode.CenterImage };
     private readonly TableLayoutPanel _emptyState = new();
-    private readonly Label _emptyTitle = new() { AutoSize = true, Text = "暂无收藏仓库" };
+    private readonly Label _emptyTitle = new() { AutoSize = true, Text = "No repositories" };
     private readonly ImageList _images = new();
     private readonly ListView _list = new();
     private readonly MultiRepositoryStatusLayoutCache _layoutCache = new();
+    private readonly ContextMenuStrip _categoriseMenu = new();
+    private readonly TranslationString _branchTooltipText = new("Branch: {0}");
+    private readonly TranslationString _checkedTooltipText = new("Checked: {0}");
+    private readonly TranslationString _checkFailedText = new("Check failed");
+    private readonly TranslationString _checkFailedTooltipText = new("Check failed: {0}");
+    private readonly TranslationString _fetchFailedText = new("Fetch failed");
+    private readonly TranslationString _fetchFailedTooltipText = new("Fetch failed: {0}");
+    private readonly TranslationString _groupCountText = new("{0} ({1})");
+    private readonly TranslationString _groupDropTargetText = new("Drop here");
+    private readonly TranslationString _noBranchText = new("No branch");
+    private readonly TranslationString _categoriesText = new("Categories");
+    private readonly TranslationString _noCategoryText = new("(none)");
+    private readonly TranslationString _addCategoryText = new("Add new...");
+    private readonly TranslationString _lastFetchText = new("Last fetch {0} · Checked {1}");
+    private readonly TranslationString _lastFetchTooltipText = new("Last fetch: {0}");
+    private readonly TranslationString _synchronizationTooltipText = new("Synchronization: {0}");
+    private readonly TranslationString _uncategorisedText = new("Uncategorised");
+    private readonly TranslationString _workingTreeTooltipText = new("Working tree: {0}");
 
-    private Dictionary<string, MultiRepositoryStatus> _statuses = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, MultiRepositoryStatus> _statuses = new(MultiRepositoryStatusRepositories.PathComparer);
     private List<Repository> _repositories = [];
     private MultiRepositoryStatusLayout _layout;
     private DashboardTheme _theme = DashboardTheme.Light;
@@ -35,6 +53,7 @@ internal sealed class MultiRepositoryStatusView : UserControl
     private ListViewItem? _hoveredItem;
     private string? _draggedRepositoryPath;
     private string? _dropTargetPath;
+    private string? _dropTargetGroupKey;
     private bool _dropAfter;
     private string? _pressedGroupKey;
     private bool _pressedGroupWasCollapsed;
@@ -46,18 +65,37 @@ internal sealed class MultiRepositoryStatusView : UserControl
 
     public MultiRepositoryStatusView()
     {
+        Name = nameof(MultiRepositoryStatusView);
         _layout = _layoutCache.Load();
         _secondaryFont = new Font(AppSettings.Font.FontFamily, Math.Max(6, AppSettings.Font.SizeInPoints - 1f));
         InitializeUi();
         WireEvents();
+        InitializeComplete();
     }
 
+    public event EventHandler<MultiRepositoryRepositoryEventArgs>? AddCategoryRequested;
+    public event EventHandler<MultiRepositoryCategoriseEventArgs>? CategoriseRequested;
     public event EventHandler? RepositoryActivated;
     public event EventHandler? SelectedRepositoryChanged;
     public event EventHandler? ReturnToTraditionalRequested;
 
     public Repository? SelectedRepository
         => _list.SelectedItems.Count == 0 ? null : _list.SelectedItems[0].Tag as Repository;
+
+    public void SelectRepository(string path)
+    {
+        _selectedPath = path;
+        foreach (ListViewItem item in _list.Items)
+        {
+            if (item.Tag is Repository repository && PathsEqual(repository.Path, path))
+            {
+                item.Selected = true;
+                item.Focused = true;
+                item.EnsureVisible();
+                break;
+            }
+        }
+    }
 
     public void ApplyTheme(DashboardTheme theme)
     {
@@ -76,7 +114,7 @@ internal sealed class MultiRepositoryStatusView : UserControl
         IReadOnlyDictionary<string, MultiRepositoryStatus> statuses)
     {
         _repositories = [.. repositories];
-        _statuses = new Dictionary<string, MultiRepositoryStatus>(statuses, StringComparer.OrdinalIgnoreCase);
+        _statuses = new Dictionary<string, MultiRepositoryStatus>(statuses, MultiRepositoryStatusRepositories.PathComparer);
         SynchronizeLayout();
         RebuildItems();
     }
@@ -122,6 +160,7 @@ internal sealed class MultiRepositoryStatusView : UserControl
         {
             _secondaryFont.Dispose();
             _images.Dispose();
+            _categoriseMenu.Dispose();
         }
 
         base.Dispose(disposing);
@@ -195,6 +234,7 @@ internal sealed class MultiRepositoryStatusView : UserControl
         _list.MouseDown += List_MouseDown;
         _list.MouseMove += List_MouseMove;
         _list.MouseUp += List_MouseUp;
+        _list.MouseClick += List_MouseClick;
         _list.MouseLeave += (_, _) => SetHoveredItem(null);
         Resize += (_, _) => UpdateTileSize();
     }
@@ -270,7 +310,7 @@ internal sealed class MultiRepositoryStatusView : UserControl
                     continue;
                 }
 
-                ListViewGroup group = new($"{GetGroupDisplayName(groupKey)}（{visibleRepositories.Count}）", HorizontalAlignment.Left)
+                ListViewGroup group = new(string.Format(_groupCountText.Text, GetGroupDisplayName(groupKey), visibleRepositories.Count), HorizontalAlignment.Left)
                 {
                     Name = groupKey,
                     TaskLink = "⋮⋮",
@@ -314,15 +354,25 @@ internal sealed class MultiRepositoryStatusView : UserControl
 
     private IEnumerable<Repository> GetOrderedRepositories(string groupKey)
     {
+        if (GroupKeysEqual(groupKey, UnclassifiedGroupKey))
+        {
+            foreach (Repository repository in _repositories.Where(IsUncategorised))
+            {
+                yield return repository;
+            }
+
+            yield break;
+        }
+
         Dictionary<string, Repository> repositories = _repositories
             .Where(repository => GroupKeysEqual(GetGroupKey(repository), groupKey))
-            .ToDictionary(repository => repository.Path, StringComparer.OrdinalIgnoreCase);
+            .ToDictionary(repository => NormalizePath(repository.Path), StringComparer.OrdinalIgnoreCase);
 
         if (_layout.RepositoryOrder.TryGetValue(groupKey, out List<string>? paths))
         {
             foreach (string path in paths)
             {
-                if (repositories.Remove(path, out Repository? repository))
+                if (repositories.Remove(NormalizePath(path), out Repository? repository))
                 {
                     yield return repository;
                 }
@@ -387,15 +437,17 @@ internal sealed class MultiRepositoryStatusView : UserControl
         int nameWidth = Math.Min(textWidth, nameSize.Width + DpiUtil.Scale(8));
         TextRenderer.DrawText(e.Graphics, name, AppSettings.Font, new Rectangle(textLeft, y, nameWidth, lineHeight), _theme.PrimaryText,
             TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis | TextFormatFlags.VerticalCenter);
-        if (textWidth - nameWidth > DpiUtil.Scale(40))
+        int hoverGripWidth = DpiUtil.Scale(24);
+        int pathWidth = textWidth - nameWidth - hoverGripWidth;
+        if (pathWidth > DpiUtil.Scale(40))
         {
             TextRenderer.DrawText(e.Graphics, GetShortPath(repository.Path), _secondaryFont,
-                new Rectangle(textLeft + nameWidth, y, textWidth - nameWidth, lineHeight), _theme.SecondaryText,
+                new Rectangle(textLeft + nameWidth, y, pathWidth, lineHeight), _theme.SecondaryText,
                 TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis | TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
         }
 
         y += lineHeight + DpiUtil.Scale(2);
-        string branchAndWorkingTree = $"{(string.IsNullOrWhiteSpace(status?.Branch) ? "无分支" : status.Branch)} · {MultiRepositoryStatusPresentation.FormatWorkingTree(status)}";
+        string branchAndWorkingTree = $"{(string.IsNullOrWhiteSpace(status?.Branch) ? _noBranchText.Text : status.Branch)} · {MultiRepositoryStatusPresentation.FormatWorkingTree(status)}";
         TextRenderer.DrawText(e.Graphics, branchAndWorkingTree, _secondaryFont, new Rectangle(textLeft, y, textWidth, lineHeight), _theme.SecondaryText,
             TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis | TextFormatFlags.VerticalCenter);
 
@@ -413,7 +465,9 @@ internal sealed class MultiRepositoryStatusView : UserControl
         }
 
         y += labelsBounds.Height + DpiUtil.Scale(1);
-        string times = $"上次 Fetch {MultiRepositoryStatusPresentation.FormatFetchTimestamp(status?.LastFetchUtc, DateTimeOffset.UtcNow)} · 检查 {MultiRepositoryStatusPresentation.FormatCheckedTimestamp(status?.LastCheckedUtc)}";
+        string times = string.Format(_lastFetchText.Text,
+            MultiRepositoryStatusPresentation.FormatFetchTimestamp(status?.LastFetchUtc, DateTimeOffset.UtcNow),
+            MultiRepositoryStatusPresentation.FormatCheckedTimestamp(status?.LastCheckedUtc));
         TextRenderer.DrawText(e.Graphics, times, _secondaryFont, new Rectangle(textLeft, y, textWidth, lineHeight), _theme.SecondaryText,
             TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis | TextFormatFlags.VerticalCenter);
 
@@ -423,15 +477,22 @@ internal sealed class MultiRepositoryStatusView : UserControl
         if (e.Item == _hoveredItem && string.IsNullOrEmpty(_searchText))
         {
             TextRenderer.DrawText(e.Graphics, "⋮⋮", _secondaryFont,
-                new Rectangle(e.Bounds.Right - DpiUtil.Scale(24), e.Bounds.Top + padding, DpiUtil.Scale(18), lineHeight), _theme.SecondaryText,
+                new Rectangle(e.Bounds.Right - hoverGripWidth, e.Bounds.Top + padding, DpiUtil.Scale(18), lineHeight), _theme.SecondaryText,
                 TextFormatFlags.NoPadding | TextFormatFlags.HorizontalCenter);
         }
 
         if (_dropTargetPath is not null && PathsEqual(_dropTargetPath, repository.Path))
         {
             using Pen pen = new(_theme.AccentedText, Math.Max(2, DpiUtil.Scale(2)));
-            int lineY = _dropAfter ? e.Bounds.Bottom - 1 : e.Bounds.Top + 1;
-            e.Graphics.DrawLine(pen, e.Bounds.Left + padding, lineY, e.Bounds.Right - padding, lineY);
+            if (_dropTargetGroupKey is not null && IsUncategorised(repository))
+            {
+                e.Graphics.DrawRectangle(pen, Rectangle.Inflate(e.Bounds, -1, -1));
+            }
+            else
+            {
+                int lineY = _dropAfter ? e.Bounds.Bottom - 1 : e.Bounds.Top + 1;
+                e.Graphics.DrawLine(pen, e.Bounds.Left + padding, lineY, e.Bounds.Right - padding, lineY);
+            }
         }
     }
 
@@ -443,7 +504,7 @@ internal sealed class MultiRepositoryStatusView : UserControl
             return;
         }
 
-        string label = status?.FetchError is not null ? "Fetch 失败" : "检查失败";
+        string label = status?.FetchError is not null ? _fetchFailedText.Text : _checkFailedText.Text;
         int offset = 0;
         Rectangle labelBounds = RevisionGridRefRenderer.DrawRef(selected, _secondaryFont, ref offset, label,
             GetLabelColor(MultiRepositorySyncLabelKind.Error), RefLabelIcon.None, bounds, graphics, fill: true);
@@ -481,6 +542,15 @@ internal sealed class MultiRepositoryStatusView : UserControl
         {
             RefreshSelectedRequested?.Invoke(this, EventArgs.Empty);
             e.Handled = true;
+            return;
+        }
+
+        if ((e.KeyCode == Keys.Apps || (e.Shift && e.KeyCode == Keys.F10)) && SelectedRepository is { } selected)
+        {
+            ListViewItem selectedItem = _list.SelectedItems[0];
+            ShowCategoriseMenu(selected, new Point(selectedItem.Bounds.Left, selectedItem.Bounds.Bottom));
+            e.Handled = true;
+            e.SuppressKeyPress = true;
             return;
         }
 
@@ -530,7 +600,32 @@ internal sealed class MultiRepositoryStatusView : UserControl
         ListViewItem? target = _list.GetItemAt(point.X, point.Y);
         ListViewItem? source = _list.Items.Cast<ListViewItem>()
             .FirstOrDefault(item => item.Tag is Repository repository && PathsEqual(repository.Path, _draggedRepositoryPath));
-        if (target?.Tag is not Repository targetRepository || source?.Group != target.Group)
+        string? targetGroupKey = FindGroupAt(point);
+        Repository? sourceRepository = source?.Tag as Repository;
+        if (sourceRepository is null || targetGroupKey is null)
+        {
+            ClearItemDropTarget();
+            return;
+        }
+
+        if (IsUncategorised(sourceRepository))
+        {
+            if (GroupKeysEqual(targetGroupKey, UnclassifiedGroupKey))
+            {
+                ClearItemDropTarget();
+                return;
+            }
+
+            _dropTargetGroupKey = targetGroupKey;
+            _dropTargetPath = target?.Tag is Repository uncategorisedTarget ? uncategorisedTarget.Path : null;
+            SetGroupDropTarget(targetGroupKey);
+            e.Effect = DragDropEffects.Move;
+            target?.EnsureVisible();
+            _list.Invalidate();
+            return;
+        }
+
+        if (target?.Tag is not Repository targetRepository || !GroupKeysEqual(GetGroupKey(sourceRepository), GetGroupKey(targetRepository)))
         {
             ClearItemDropTarget();
             return;
@@ -539,6 +634,7 @@ internal sealed class MultiRepositoryStatusView : UserControl
         _dropAfter = point.Y > target.Bounds.Top + (target.Bounds.Height / 2)
             || (Math.Abs(point.Y - (target.Bounds.Top + (target.Bounds.Height / 2))) < target.Bounds.Height / 3
                 && point.X > target.Bounds.Left + (target.Bounds.Width / 2));
+        _dropTargetGroupKey = targetGroupKey;
         _dropTargetPath = targetRepository.Path;
         e.Effect = DragDropEffects.Move;
         target.EnsureVisible();
@@ -547,28 +643,91 @@ internal sealed class MultiRepositoryStatusView : UserControl
 
     private void List_DragDrop(object? sender, DragEventArgs e)
     {
-        if (_draggedRepositoryPath is null || _dropTargetPath is null || PathsEqual(_draggedRepositoryPath, _dropTargetPath))
+        if (_draggedRepositoryPath is null || _dropTargetGroupKey is null)
         {
             ClearItemDropTarget();
             return;
         }
 
         Repository? source = _repositories.FirstOrDefault(repository => PathsEqual(repository.Path, _draggedRepositoryPath));
-        Repository? target = _repositories.FirstOrDefault(repository => PathsEqual(repository.Path, _dropTargetPath));
-        if (source is null || target is null || !GroupKeysEqual(GetGroupKey(source), GetGroupKey(target)))
+        if (source is null)
         {
             ClearItemDropTarget();
             return;
         }
 
-        List<string> paths = _layout.RepositoryOrder[GetGroupKey(source)];
-        paths.RemoveAll(path => PathsEqual(path, source.Path));
-        int targetIndex = paths.FindIndex(path => PathsEqual(path, target.Path));
-        paths.Insert(Math.Clamp(targetIndex + (_dropAfter ? 1 : 0), 0, paths.Count), source.Path);
-        _selectedPath = source.Path;
-        SaveLayout();
-        RebuildItems();
+        if (IsUncategorised(source))
+        {
+            if (!GroupKeysEqual(_dropTargetGroupKey, UnclassifiedGroupKey))
+            {
+                CategoriseRequested?.Invoke(this, new(source, _dropTargetGroupKey));
+            }
+        }
+        else if (_dropTargetPath is not null && !PathsEqual(source.Path, _dropTargetPath))
+        {
+            List<string> paths = _layout.RepositoryOrder[GetGroupKey(source)];
+            paths.RemoveAll(path => PathsEqual(path, source.Path));
+            int targetIndex = paths.FindIndex(path => PathsEqual(path, _dropTargetPath));
+            paths.Insert(Math.Clamp(targetIndex + (_dropAfter ? 1 : 0), 0, paths.Count), source.Path);
+            _selectedPath = source.Path;
+            SaveLayout();
+            RebuildItems();
+        }
+
         ClearItemDropTarget();
+    }
+
+    private void List_MouseClick(object? sender, MouseEventArgs e)
+    {
+        if (e.Button == MouseButtons.Right && _list.GetItemAt(e.X, e.Y)?.Tag is Repository repository)
+        {
+            ShowCategoriseMenu(repository, e.Location);
+        }
+    }
+
+    private void ShowCategoriseMenu(Repository repository, Point location)
+    {
+        if (!IsUncategorised(repository))
+        {
+            return;
+        }
+
+        _categoriseMenu.Items.Clear();
+        _categoriseMenu.Items.Add(CreateCategoriesMenu(repository));
+        _categoriseMenu.Show(_list, location);
+    }
+
+    internal ToolStripMenuItem CreateCategoriesMenu(Repository repository)
+    {
+        List<string> categories = [.. _repositories
+            .Select(candidate => candidate.Category?.Trim())
+            .Where(category => !string.IsNullOrWhiteSpace(category))
+            .Select(category => category!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.CurrentCultureIgnoreCase)];
+
+        ToolStripMenuItem root = new(_categoriesText.Text);
+        if (categories.Count != 0)
+        {
+            root.DropDownItems.Add(new ToolStripMenuItem(_noCategoryText.Text) { Enabled = false });
+        }
+
+        foreach (string category in categories)
+        {
+            ToolStripMenuItem item = new(category) { Tag = category };
+            item.Click += (_, _) => CategoriseRequested?.Invoke(this, new(repository, category));
+            root.DropDownItems.Add(item);
+        }
+
+        if (categories.Count != 0)
+        {
+            root.DropDownItems.Add(new ToolStripSeparator());
+        }
+
+        ToolStripMenuItem addCategory = new(_addCategoryText.Text) { Image = Images.BulletAdd };
+        addCategory.Click += (_, _) => AddCategoryRequested?.Invoke(this, new(repository));
+        root.DropDownItems.Add(addCategory);
+        return root;
     }
 
     private void List_MouseDown(object? sender, MouseEventArgs e)
@@ -629,6 +788,11 @@ internal sealed class MultiRepositoryStatusView : UserControl
 
     private void MoveRepository(Repository repository, int direction)
     {
+        if (IsUncategorised(repository))
+        {
+            return;
+        }
+
         string groupKey = GetGroupKey(repository);
         List<string> paths = _layout.RepositoryOrder[groupKey];
         int index = paths.FindIndex(path => PathsEqual(path, repository.Path));
@@ -743,7 +907,16 @@ internal sealed class MultiRepositoryStatusView : UserControl
             return header;
         }
 
-        return _list.GetItemAt(point.X, point.Y)?.Group?.Name;
+        string? itemGroup = _list.GetItemAt(point.X, point.Y)?.Group?.Name;
+        if (itemGroup is not null)
+        {
+            return itemGroup;
+        }
+
+        return _list.Groups.Cast<ListViewGroup>()
+            .FirstOrDefault(group => ListViewGroupAccessibilityObjectProperty?.GetValue(group) is AccessibleObject accessibilityObject
+                                     && _list.RectangleToClient(accessibilityObject.Bounds).Contains(point))
+            ?.Name;
     }
 
     private void SetHoveredItem(ListViewItem? item)
@@ -762,7 +935,17 @@ internal sealed class MultiRepositoryStatusView : UserControl
     private void ClearItemDropTarget()
     {
         _dropTargetPath = null;
+        _dropTargetGroupKey = null;
+        SetGroupDropTarget(null);
         _list.Invalidate();
+    }
+
+    private void SetGroupDropTarget(string? groupKey)
+    {
+        foreach (ListViewGroup group in _list.Groups)
+        {
+            group.TaskLink = groupKey is not null && group.Name is not null && GroupKeysEqual(group.Name, groupKey) ? _groupDropTargetText.Text : "⋮⋮";
+        }
     }
 
     private void UpdateTileSize()
@@ -781,8 +964,11 @@ internal sealed class MultiRepositoryStatusView : UserControl
     private static string GetGroupKey(Repository repository)
         => string.IsNullOrWhiteSpace(repository.Category) ? UnclassifiedGroupKey : repository.Category.Trim();
 
-    private static string GetGroupDisplayName(string groupKey)
-        => GroupKeysEqual(groupKey, UnclassifiedGroupKey) ? "未分类" : groupKey;
+    private string GetGroupDisplayName(string groupKey)
+        => GroupKeysEqual(groupKey, UnclassifiedGroupKey) ? _uncategorisedText.Text : groupKey;
+
+    private static bool IsUncategorised(Repository repository)
+        => string.IsNullOrWhiteSpace(repository.Category);
 
     private static bool GroupKeysEqual(string left, string right)
         => string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
@@ -837,28 +1023,48 @@ internal sealed class MultiRepositoryStatusView : UserControl
             _ => SystemColors.GrayText
         };
 
-    private static string BuildToolTip(Repository repository, MultiRepositoryStatus? status)
+    private string BuildToolTip(Repository repository, MultiRepositoryStatus? status)
     {
         string synchronization = string.Join(" · ", MultiRepositoryStatusPresentation.GetSynchronizationLabels(status).Select(label => label.Text));
         List<string> lines =
         [
             repository.Path,
-            $"分支：{(string.IsNullOrWhiteSpace(status?.Branch) ? "无分支" : status.Branch)}",
-            $"工作区：{MultiRepositoryStatusPresentation.FormatWorkingTree(status)}",
-            $"同步：{synchronization}",
-            $"上次 Fetch：{MultiRepositoryStatusPresentation.FormatFetchTimestamp(status?.LastFetchUtc, DateTimeOffset.UtcNow)}",
-            $"检查时间：{MultiRepositoryStatusPresentation.FormatCheckedTimestamp(status?.LastCheckedUtc)}"
+            string.Format(_branchTooltipText.Text, string.IsNullOrWhiteSpace(status?.Branch) ? _noBranchText.Text : status.Branch),
+            string.Format(_workingTreeTooltipText.Text, MultiRepositoryStatusPresentation.FormatWorkingTree(status)),
+            string.Format(_synchronizationTooltipText.Text, synchronization),
+            string.Format(_lastFetchTooltipText.Text, MultiRepositoryStatusPresentation.FormatFetchTimestamp(status?.LastFetchUtc, DateTimeOffset.UtcNow)),
+            string.Format(_checkedTooltipText.Text, MultiRepositoryStatusPresentation.FormatCheckedTimestamp(status?.LastCheckedUtc))
         ];
         if (!string.IsNullOrWhiteSpace(status?.Error))
         {
-            lines.Add(status.FetchError is not null ? $"Fetch 失败：{status.FetchError}" : $"检查失败：{status.StatusError}");
+            lines.Add(status.FetchError is not null
+                ? string.Format(_fetchFailedTooltipText.Text, status.FetchError)
+                : string.Format(_checkFailedTooltipText.Text, status.StatusError));
         }
 
         return string.Join(Environment.NewLine, lines);
     }
 
     private static bool PathsEqual(string left, string right)
-        => string.Equals(left.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-                         right.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-                         StringComparison.OrdinalIgnoreCase);
+        => string.Equals(NormalizePath(left), NormalizePath(right), StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizePath(string path)
+    {
+        string trimmed = path.Trim();
+        string root = Path.GetPathRoot(trimmed) ?? "";
+        return trimmed.Length > root.Length
+            ? trimmed.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            : trimmed;
+    }
+}
+
+internal sealed class MultiRepositoryCategoriseEventArgs(Repository repository, string category) : EventArgs
+{
+    public Repository Repository { get; } = repository;
+    public string Category { get; } = category;
+}
+
+internal sealed class MultiRepositoryRepositoryEventArgs(Repository repository) : EventArgs
+{
+    public Repository Repository { get; } = repository;
 }

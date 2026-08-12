@@ -19,8 +19,8 @@ public partial class Dashboard : GitModuleControl
     private readonly TranslationString _donate = new("Donate");
     private readonly TranslationString _issues = new("Issues");
     private readonly TranslationString _openRepository = new("Open repository");
-    private readonly TranslationString _repositoryStatus = new("仓库状态总览");
-    private readonly TranslationString _traditionalView = new("回到传统视图");
+    private readonly TranslationString _repositoryStatus = new("Repository status overview");
+    private readonly TranslationString _traditionalView = new("Return to traditional view");
     private readonly TranslationString _translate = new("Translate");
 
     public event EventHandler<GitModuleEventArgs>? GitModuleChanged;

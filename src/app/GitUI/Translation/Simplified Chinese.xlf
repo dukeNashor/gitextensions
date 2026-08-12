@@ -1620,6 +1620,14 @@ Please make sure that Git for Windows is installed or set the correct command ma
         <target>打开版本库</target>
         
       </trans-unit>
+      <trans-unit id="_repositoryStatus.Text">
+        <source>Repository status overview</source>
+        <target>仓库状态总览</target>
+      </trans-unit>
+      <trans-unit id="_traditionalView.Text">
+        <source>Return to traditional view</source>
+        <target>回到传统视图</target>
+      </trans-unit>
       <trans-unit id="_translate.Text">
         <source>Translate</source>
         <target>翻译</target>
@@ -13965,6 +13973,89 @@ Details: Is {1} expected {2}</source>
         <target>注释</target>
         
       </trans-unit>
+    </body>
+  </file>
+  <file datatype="plaintext" original="MultiRepositoryStatusControl" source-language="en" target-language="zh-Hans">
+    <body>
+      <trans-unit id="_cachedResultsText.Text"><source>Showing cached results and refreshing...</source><target>正在显示缓存结果并刷新…</target></trans-unit>
+      <trans-unit id="_categoriseFailedCaption.Text"><source>Could not categorise repository</source><target>无法归类仓库</target></trans-unit>
+      <trans-unit id="_categoriseFailedText.Text"><source>The repository could not be moved to group '{0}'.&#xA;&#xA;{1}</source><target>无法将仓库移动到分组“{0}”。&#xA;&#xA;{1}</target></trans-unit>
+      <trans-unit id="_checkingRepositoryText.Text"><source>Checking {0}...</source><target>正在检查 {0}…</target></trans-unit>
+      <trans-unit id="_checkingText.Text"><source>Checking local repository status...</source><target>正在检查本地仓库状态…</target></trans-unit>
+      <trans-unit id="_fetchingAllText.Text"><source>Fetching all remotes...</source><target>正在 Fetch 全部远端…</target></trans-unit>
+      <trans-unit id="_fetchingIdleText.Text"><source>System is idle. Fetching repositories...</source><target>系统空闲，正在 Fetch 仓库…</target></trans-unit>
+      <trans-unit id="_groupNoLongerExistsText.Text"><source>The target group no longer exists.</source><target>目标分组已不存在。</target></trans-unit>
+      <trans-unit id="_repositoryCountText.Text"><source>{0} repositories · {1} uncategorised</source><target>共 {0} 个仓库 · {1} 个未分类</target></trans-unit>
+      <trans-unit id="_fetchAllButton.Text"><source>Fetch all repositories</source><target>Fetch 全部仓库</target></trans-unit>
+      <trans-unit id="_fetchButton.Text"><source>Fetch selected</source><target>Fetch 选中</target></trans-unit>
+      <trans-unit id="_openButton.Text"><source>Open</source><target>打开</target></trans-unit>
+      <trans-unit id="_resetOrderingButton.Text"><source>Reset ordering</source><target>重置排序</target></trans-unit>
+      <trans-unit id="_refreshAllButton.Text"><source>Check all repositories</source><target>检查全部仓库</target></trans-unit>
+      <trans-unit id="_refreshButton.Text"><source>Check selected</source><target>检查选中</target></trans-unit>
+      <trans-unit id="_searchBox.PlaceholderText"><source>Search repositories, paths, groups or branches</source><target>搜索仓库、路径、分组或分支</target></trans-unit>
+      <trans-unit id="_titleLabel.Text"><source>Repository status overview</source><target>仓库状态总览</target></trans-unit>
+    </body>
+  </file>
+  <file datatype="plaintext" original="MultiRepositoryStatusView" source-language="en" target-language="zh-Hans">
+    <body>
+      <trans-unit id="_emptyBackButton.Text"><source>Return to traditional view</source><target>回到传统视图</target></trans-unit>
+      <trans-unit id="_emptyDescription.Text"><source>Open a repository or categorise one in the traditional view.</source><target>请先打开仓库，或在传统视图中将仓库归类。</target></trans-unit>
+      <trans-unit id="_emptyTitle.Text"><source>No repositories</source><target>暂无仓库</target></trans-unit>
+      <trans-unit id="_branchTooltipText.Text"><source>Branch: {0}</source><target>分支：{0}</target></trans-unit>
+      <trans-unit id="_checkedTooltipText.Text"><source>Checked: {0}</source><target>检查时间：{0}</target></trans-unit>
+      <trans-unit id="_checkFailedText.Text"><source>Check failed</source><target>检查失败</target></trans-unit>
+      <trans-unit id="_checkFailedTooltipText.Text"><source>Check failed: {0}</source><target>检查失败：{0}</target></trans-unit>
+      <trans-unit id="_fetchFailedText.Text"><source>Fetch failed</source><target>Fetch 失败</target></trans-unit>
+      <trans-unit id="_fetchFailedTooltipText.Text"><source>Fetch failed: {0}</source><target>Fetch 失败：{0}</target></trans-unit>
+      <trans-unit id="_groupCountText.Text"><source>{0} ({1})</source><target>{0}（{1}）</target></trans-unit>
+      <trans-unit id="_groupDropTargetText.Text"><source>Drop here</source><target>拖放到此处</target></trans-unit>
+      <trans-unit id="_noBranchText.Text"><source>No branch</source><target>无分支</target></trans-unit>
+      <trans-unit id="_categoriesText.Text"><source>Categories</source><target>分类</target></trans-unit>
+      <trans-unit id="_noCategoryText.Text"><source>(none)</source><target>(无)</target></trans-unit>
+      <trans-unit id="_addCategoryText.Text"><source>Add new...</source><target>添加项目…</target></trans-unit>
+      <trans-unit id="_lastFetchText.Text"><source>Last fetch {0} · Checked {1}</source><target>上次 Fetch {0} · 检查 {1}</target></trans-unit>
+      <trans-unit id="_lastFetchTooltipText.Text"><source>Last fetch: {0}</source><target>上次 Fetch：{0}</target></trans-unit>
+      <trans-unit id="_synchronizationTooltipText.Text"><source>Synchronization: {0}</source><target>同步：{0}</target></trans-unit>
+      <trans-unit id="_uncategorisedText.Text"><source>Uncategorised</source><target>未分类</target></trans-unit>
+      <trans-unit id="_workingTreeTooltipText.Text"><source>Working tree: {0}</source><target>工作区：{0}</target></trans-unit>
+    </body>
+  </file>
+  <file datatype="plaintext" original="MultiRepositoryStatusSettingsPage" source-language="en" target-language="zh-Hans">
+    <body>
+      <trans-unit id="$this.Text"><source>Repository status overview</source><target>仓库状态总览</target></trans-unit>
+      <trans-unit id="_autoFetchEnabled.Text"><source>Automatically fetch repositories while the system is idle</source><target>系统空闲时自动 Fetch 总览仓库</target></trans-unit>
+      <trans-unit id="_concurrencyLabel.Text"><source>Maximum concurrent repositories</source><target>最大并发仓库数</target></trans-unit>
+      <trans-unit id="_explanation.Text"><source>The overview checks categorised repositories and valid uncategorised repositories from recent history. Automatic and manual fetches access all remotes configured for every repository in the overview.</source><target>总览检查已分类仓库，以及最近历史中有效的未分类仓库。自动和手动 Fetch 都会访问总览中每个仓库配置的全部远端。</target></trans-unit>
+      <trans-unit id="_fetchIntervalLabel.Text"><source>Repeat after this many minutes while idle</source><target>持续空闲时每隔多少分钟执行</target></trans-unit>
+      <trans-unit id="_idleMinutesLabel.Text"><source>Start after this many idle minutes</source><target>系统空闲多少分钟后开始</target></trans-unit>
+      <trans-unit id="_timeoutLabel.Text"><source>Fetch timeout per repository in seconds</source><target>单仓库 Fetch 超时秒数</target></trans-unit>
+    </body>
+  </file>
+  <file datatype="plaintext" original="MultiRepositoryStatusPresentationTexts" source-language="en" target-language="zh-Hans">
+    <body>
+      <trans-unit id="_ahead.Text"><source>Ahead {0}</source><target>领先 {0}</target></trans-unit>
+      <trans-unit id="_bareRepository.Text"><source>Bare repository</source><target>裸仓库</target></trans-unit>
+      <trans-unit id="_behind.Text"><source>Behind {0}</source><target>落后 {0}</target></trans-unit>
+      <trans-unit id="_clean.Text"><source>Clean</source><target>干净</target></trans-unit>
+      <trans-unit id="_detachedHead.Text"><source>Detached HEAD</source><target>分离 HEAD</target></trans-unit>
+      <trans-unit id="_diverged.Text"><source>Diverged</source><target>已分叉</target></trans-unit>
+      <trans-unit id="_justNow.Text"><source>Just now</source><target>刚刚</target></trans-unit>
+      <trans-unit id="_modified.Text"><source>Modified {0}</source><target>已修改 {0}</target></trans-unit>
+      <trans-unit id="_never.Text"><source>Never</source><target>从未</target></trans-unit>
+      <trans-unit id="_noUpstream.Text"><source>No upstream</source><target>未设置上游</target></trans-unit>
+      <trans-unit id="_relativeAndAbsoluteTime.Text"><source>{0} ({1})</source><target>{0}（{1}）</target></trans-unit>
+      <trans-unit id="_staged.Text"><source>Staged {0}</source><target>已暂存 {0}</target></trans-unit>
+      <trans-unit id="_synchronized.Text"><source>Synchronized</source><target>已同步</target></trans-unit>
+      <trans-unit id="_untracked.Text"><source>Untracked {0}</source><target>未跟踪 {0}</target></trans-unit>
+      <trans-unit id="_waitingForCheck.Text"><source>Waiting for check</source><target>等待检查</target></trans-unit>
+    </body>
+  </file>
+  <file datatype="plaintext" original="MultiRepositoryStatusProviderStrings" source-language="en" target-language="zh-Hans">
+    <body>
+      <trans-unit id="_directoryMissing.Text"><source>The repository directory does not exist.</source><target>仓库目录不存在。</target></trans-unit>
+      <trans-unit id="_fetchTimedOut.Text"><source>Fetch timed out after {0:0} seconds.</source><target>Fetch 在 {0:0} 秒后超时。</target></trans-unit>
+      <trans-unit id="_notGitRepository.Text"><source>The directory is not a Git repository.</source><target>该目录不是 Git 仓库。</target></trans-unit>
+      <trans-unit id="_repositoryBusy.Text"><source>The repository is busy. Fetch was skipped.</source><target>仓库正忙，已跳过本次 Fetch。</target></trans-unit>
     </body>
   </file>
 </xliff>

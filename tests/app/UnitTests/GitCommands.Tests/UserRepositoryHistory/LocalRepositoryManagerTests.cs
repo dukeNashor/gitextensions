@@ -123,6 +123,35 @@ public class LocalRepositoryManagerTests
     }
 
     [Test]
+    public async Task AssignCategoryAsync_should_add_uncategorised_recent_repository_to_category()
+    {
+        Repository repository = new("path");
+        _repositoryStorage.Load(KeyFavouriteHistory).Returns(new List<Repository>());
+        _repositoryHistoryMigrator.MigrateAsync(Arg.Any<IList<Repository>>()).Returns(x => ((IList<Repository>)x[0], false));
+
+        IList<Repository> result = await _manager.AssignCategoryAsync(repository, "Work");
+
+        result.Should().ContainSingle().Which.Should().BeSameAs(repository);
+        repository.Category.Should().Be("Work");
+        _repositoryStorage.Received(1).Save(KeyFavouriteHistory,
+            Arg.Is<IEnumerable<Repository>>(repositories => repositories.Single() == repository));
+    }
+
+    [Test]
+    public async Task AssignCategoryAsync_should_update_existing_uncategorised_compatibility_entry()
+    {
+        Repository stored = new("path");
+        List<Repository> favourites = [stored];
+        _repositoryStorage.Load(KeyFavouriteHistory).Returns(favourites);
+        _repositoryHistoryMigrator.MigrateAsync(Arg.Any<IList<Repository>>()).Returns((favourites, false));
+
+        IList<Repository> result = await _manager.AssignCategoryAsync(new Repository("PATH"), "Work");
+
+        result.Should().ContainSingle().Which.Should().BeSameAs(stored);
+        stored.Category.Should().Be("Work");
+    }
+
+    [Test]
     public async Task LoadFavouriteHistoryAsync_should_return_empty_list_if_nothing_loaded()
     {
         _repositoryStorage.Load(KeyFavouriteHistory).Returns(x => null!);
