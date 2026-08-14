@@ -1,5 +1,6 @@
 ﻿using System.ComponentModel;
 using GitCommands.Git;
+using GitExtensions.Extensibility.Git;
 using GitExtUtils.GitUI.Theming;
 using GitUI.CommandsDialogs;
 using GitUI.CommandsDialogs.BrowseDialog;
@@ -29,6 +30,8 @@ public partial class InteractiveGitActionControl : GitModuleControl
         Patch
     }
 
+    internal readonly record struct GitActionState(GitAction Action, bool HasConflicts);
+
     private GitAction _action;
     private bool _hasConflicts;
 
@@ -46,18 +49,22 @@ public partial class InteractiveGitActionControl : GitModuleControl
     // of git actions
     public void RefreshBisect()
     {
-        if (!Module.IsValidGitWorkingDir())
+        if (GetBisectState(Module) is GitActionState state)
         {
-            return;
+            ApplyState(state);
+        }
+    }
+
+    internal static GitActionState? GetBisectState(IGitModule module)
+    {
+        if (!module.IsValidGitWorkingDir())
+        {
+            return null;
         }
 
-        if (Module.InTheMiddleOfBisect())
-        {
-            SetGitAction(GitAction.Bisect, false);
-            return;
-        }
-
-        SetGitAction(GitAction.None, false);
+        return new GitActionState(
+            module.InTheMiddleOfBisect() ? GitAction.Bisect : GitAction.None,
+            HasConflicts: false);
     }
 
     /// <summary>
@@ -66,11 +73,19 @@ public partial class InteractiveGitActionControl : GitModuleControl
     /// <param name="checkForConflicts">Allow running Git command to check for conflicts.</param>
     public void RefreshGitAction(bool checkForConflicts)
     {
+        if (GetGitActionState(Module, checkForConflicts) is GitActionState state)
+        {
+            ApplyState(state);
+        }
+    }
+
+    internal static GitActionState? GetGitActionState(IGitModule module, bool checkForConflicts)
+    {
         // get the current state of the repo
 
-        if (!Module.IsValidGitWorkingDir())
+        if (!module.IsValidGitWorkingDir())
         {
-            return;
+            return null;
         }
 
         bool hasConflicts;
@@ -79,33 +94,32 @@ public partial class InteractiveGitActionControl : GitModuleControl
             // This command can be executed seemingly in the background (selecting Browse),
             // do not notify the user (this can occur if Git is upgraded).
             // Running Git commands async when restoring may fail.
-            hasConflicts = checkForConflicts && Module.InTheMiddleOfConflictedMerge(throwOnErrorExit: false);
+            hasConflicts = checkForConflicts && module.InTheMiddleOfConflictedMerge(throwOnErrorExit: false);
         }
         catch (Win32Exception)
         {
             hasConflicts = false;
         }
 
-        if (Module.InTheMiddleOfRebase())
+        if (module.InTheMiddleOfRebase())
         {
-            SetGitAction(GitAction.Rebase, hasConflicts);
-            return;
+            return new GitActionState(GitAction.Rebase, hasConflicts);
         }
 
-        if (Module.InTheMiddleOfMerge())
+        if (module.InTheMiddleOfMerge())
         {
-            SetGitAction(GitAction.Merge, hasConflicts);
-            return;
+            return new GitActionState(GitAction.Merge, hasConflicts);
         }
 
-        if (Module.InTheMiddleOfPatch())
+        if (module.InTheMiddleOfPatch())
         {
-            SetGitAction(GitAction.Patch, hasConflicts);
-            return;
+            return new GitActionState(GitAction.Patch, hasConflicts);
         }
 
-        SetGitAction(GitAction.None, hasConflicts);
+        return new GitActionState(GitAction.None, hasConflicts);
     }
+
+    internal void ApplyState(GitActionState state) => SetGitAction(state.Action, state.HasConflicts);
 
     private void SetGitAction(GitAction action, bool hasConflicts)
     {

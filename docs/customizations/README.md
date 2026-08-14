@@ -6,8 +6,8 @@ Git Extensions Duke Edition 是基于官方 Git Extensions 的个人发行线。
 
 | 项目 | 当前值 |
 | --- | --- |
-| Duke 版版本 | `7.2.0-duke.1` |
-| Windows 文件版本 | `7.2.0.1` |
+| Duke 版版本 | `7.2.0-duke.2` |
+| Windows 文件版本 | `7.2.0.2` |
 | 官方跟踪分支 | `origin/release/7.0` |
 | 已吸收官方版本 | `v7.2.0` |
 | 官方基线提交 | `501f831ed25127e4a301b7649d5d4e6524f53bba` |
@@ -26,6 +26,7 @@ git log --reverse --oneline 501f831e..HEAD
 ## 当前魔改
 
 - [仓库状态总览](multi-repository-status-overview.md)：首页集中检查已分类仓库与最近未分类仓库、展示同步状态，并在系统空闲时 Fetch 全部远端。
+- [窗口恢复响应优化](window-restore-responsiveness.md)：从最小化恢复时将 Git 操作状态检查移出 UI 首帧路径，并以仓库快照和版本守卫丢弃过期结果。
 
 ## 维护方式
 

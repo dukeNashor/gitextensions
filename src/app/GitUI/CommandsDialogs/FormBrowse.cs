@@ -223,6 +223,8 @@ public sealed partial class FormBrowse : GitModuleForm, IBrowseRepo
     private Dashboard? _dashboard;
     private bool _isFileHistoryMode;
     private bool _fileBlameHistoryLeftPanelStartupState;
+    private bool _activationAfterMinimizePending;
+    private int _activationRefreshVersion;
 
     private TabPage? _consoleTabPage;
     private OutputHistoryControllerBase? _outputHistoryController;
@@ -455,6 +457,7 @@ public sealed partial class FormBrowse : GitModuleForm, IBrowseRepo
     {
         if (disposing)
         {
+            _activationRefreshVersion++;
             _loadOperations.JoinPendingOperations();
             _formBrowseMenus?.Dispose();
             components?.Dispose();
@@ -573,7 +576,16 @@ public sealed partial class FormBrowse : GitModuleForm, IBrowseRepo
 
         _windowsJumpListManager.EnableThumbnailToolbar(_dashboard?.Visible is not true && Module.IsValidGitWorkingDir());
 
-        this.InvokeAndForget(OnActivate);
+        if (_activationAfterMinimizePending && WindowState != FormWindowState.Minimized)
+        {
+            _activationAfterMinimizePending = false;
+            ScheduleActivationStateRefresh();
+        }
+        else
+        {
+            this.InvokeAndForget(OnActivate);
+        }
+
         base.OnActivated(e);
     }
 
@@ -632,6 +644,15 @@ public sealed partial class FormBrowse : GitModuleForm, IBrowseRepo
 
     protected override void WndProc(ref Message m)
     {
+        const int windowSizeMessage = 0x0005;
+        const long sizeMinimized = 1;
+
+        if (m.Msg == windowSizeMessage && m.WParam.ToInt64() == sizeMinimized)
+        {
+            _activationAfterMinimizePending = true;
+            _activationRefreshVersion++;
+        }
+
         if (m.Msg == _closeAllMessage || m is { Msg: NativeMethods.WM_SYSCOMMAND, WParam: NativeMethods.SC_CLOSE })
         {
             // Application close is requested, e.g. using the Taskbar context menu.
@@ -1173,12 +1194,49 @@ public sealed partial class FormBrowse : GitModuleForm, IBrowseRepo
 
     private void OnActivate()
     {
+        _activationRefreshVersion++;
+
         // check if we are in the middle of bisect
         notificationBarBisectInProgress.RefreshBisect();
 
         // check if we are in the middle of an action (merge/rebase/etc.)
         notificationBarGitActionInProgress.RefreshGitAction(
             checkForConflicts: AppSettings.GitAsyncWhenMinimized || (WindowState != FormWindowState.Minimized));
+    }
+
+    private void ScheduleActivationStateRefresh()
+    {
+        IGitModule module = Module;
+        int version = ++_activationRefreshVersion;
+        bool checkForConflicts = AppSettings.GitAsyncWhenMinimized || WindowState != FormWindowState.Minimized;
+
+        ThreadHelper.FileAndForget(async () =>
+        {
+            await TaskScheduler.Default;
+
+            InteractiveGitActionControl.GitActionState? bisectState = InteractiveGitActionControl.GetBisectState(module);
+            InteractiveGitActionControl.GitActionState? gitActionState = InteractiveGitActionControl.GetGitActionState(module, checkForConflicts);
+
+            await this.SwitchToMainThreadAsync();
+
+            if (version != _activationRefreshVersion
+                || !ReferenceEquals(module, Module)
+                || Disposing
+                || IsDisposed)
+            {
+                return;
+            }
+
+            if (bisectState is InteractiveGitActionControl.GitActionState currentBisectState)
+            {
+                notificationBarBisectInProgress.ApplyState(currentBisectState);
+            }
+
+            if (gitActionState is InteractiveGitActionControl.GitActionState currentGitActionState)
+            {
+                notificationBarGitActionInProgress.ApplyState(currentGitActionState);
+            }
+        });
     }
 
     private void UpdateStashCount()
