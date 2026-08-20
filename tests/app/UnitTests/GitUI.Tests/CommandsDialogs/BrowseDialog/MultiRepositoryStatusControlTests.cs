@@ -10,6 +10,15 @@ namespace GitUITests.CommandsDialogs.BrowseDialog;
 public sealed class MultiRepositoryStatusControlTests
 {
     [Test]
+    public void IsOpenableRepository_should_reject_missing_directory()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"gitextensions-missing-{Guid.NewGuid():N}");
+
+        Directory.Exists(path).Should().BeFalse();
+        MultiRepositoryStatusControl.IsOpenableRepository(path).Should().BeFalse();
+    }
+
+    [Test]
     public async Task RefreshContent_marshals_control_updates_to_UI_thread()
     {
         bool previousCheckForIllegalCrossThreadCalls = Control.CheckForIllegalCrossThreadCalls;

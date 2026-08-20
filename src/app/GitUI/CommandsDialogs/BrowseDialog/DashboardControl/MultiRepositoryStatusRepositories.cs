@@ -9,16 +9,17 @@ internal static class MultiRepositoryStatusRepositories
     public static List<Repository> Combine(
         IEnumerable<Repository> recentRepositories,
         IEnumerable<Repository> categorisedRepositories,
-        Func<string, bool> isValidRecentRepository)
+        Func<string, bool> isValidRepository)
     {
         ArgumentNullException.ThrowIfNull(recentRepositories);
         ArgumentNullException.ThrowIfNull(categorisedRepositories);
-        ArgumentNullException.ThrowIfNull(isValidRecentRepository);
+        ArgumentNullException.ThrowIfNull(isValidRepository);
 
         List<Repository> categorised = DistinctByPath(categorisedRepositories
             .Where(repository => !string.IsNullOrWhiteSpace(repository.Category)));
         List<Repository> uncategorisedStored = DistinctByPath(categorisedRepositories
-            .Where(repository => string.IsNullOrWhiteSpace(repository.Category)));
+            .Where(repository => string.IsNullOrWhiteSpace(repository.Category))
+            .Where(repository => isValidRepository(repository.Path)));
         Dictionary<string, Repository> uncategorisedStoredByPath = uncategorisedStored
             .ToDictionary(repository => NormalizePath(repository.Path), StringComparer.OrdinalIgnoreCase);
 
@@ -35,7 +36,7 @@ internal static class MultiRepositoryStatusRepositories
             }
 
             string path = NormalizePath(recent.Path);
-            if (includedPaths.Contains(path) || !isValidRecentRepository(recent.Path))
+            if (includedPaths.Contains(path) || !isValidRepository(recent.Path))
             {
                 continue;
             }

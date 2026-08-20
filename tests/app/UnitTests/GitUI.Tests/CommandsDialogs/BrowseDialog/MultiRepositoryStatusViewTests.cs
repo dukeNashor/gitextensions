@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using GitCommands.UserRepositoryHistory;
 using GitExtUtils.GitUI;
@@ -8,6 +9,8 @@ namespace GitUITests.CommandsDialogs.BrowseDialog;
 [Apartment(ApartmentState.STA)]
 public sealed class MultiRepositoryStatusViewTests
 {
+    private const uint ListViewDeleteItemMessage = 0x1008;
+
     [Test]
     public void SetViewMode_uses_details_columns_and_preserves_selection()
     {
@@ -57,6 +60,69 @@ public sealed class MultiRepositoryStatusViewTests
         InvokeColumnClick(view, list, 0);
         RepositoryPaths(list).Should().Equal(beta.Path, alpha.Path);
         list.Columns[0].Text.Should().Be("Name");
+    }
+
+    [Test]
+    public void ColumnWidthChanged_with_stale_column_index_should_not_throw()
+    {
+        using MultiRepositoryStatusView view = new(new());
+        view.SetViewMode(MultiRepositoryStatusViewMode.Details);
+        ListView list = view.Controls.OfType<ListView>().Single();
+
+        Action act = () => typeof(MultiRepositoryStatusView)
+            .GetMethod("List_ColumnWidthChanged", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(view, [list, new ColumnWidthChangedEventArgs(14)]);
+
+        act.Should().NotThrow();
+    }
+
+    [Test]
+    public void ColumnClick_with_stale_column_index_should_not_throw()
+    {
+        using MultiRepositoryStatusView view = new(new());
+        view.SetViewMode(MultiRepositoryStatusViewMode.Details);
+        ListView list = view.Controls.OfType<ListView>().Single();
+
+        Action act = () => typeof(MultiRepositoryStatusView)
+            .GetMethod("List_ColumnClick", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(view, [list, new ColumnClickEventArgs(14)]);
+
+        act.Should().NotThrow();
+    }
+
+    [Test]
+    public void GroupHeaderHitTest_with_collapsed_group_should_not_throw()
+    {
+        MultiRepositoryStatusLayout layout = new();
+        layout.CollapsedGroups.Add("Work");
+        using MultiRepositoryStatusView view = new(layout);
+        using Form form = new() { ShowInTaskbar = false };
+        form.Controls.Add(view);
+        view.Dock = DockStyle.Fill;
+        form.Show();
+        Application.DoEvents();
+        view.CreateControl();
+        ListView list = view.Controls.OfType<ListView>().Single();
+        list.CreateControl();
+        view.SetViewMode(MultiRepositoryStatusViewMode.Details);
+        view.SetContent(
+            Enumerable.Range(0, 15)
+                .Select(index => new Repository($@"C:\work\repository-{index}") { Category = "Work" })
+            .ToList(),
+            new Dictionary<string, MultiRepositoryStatus>());
+        Application.DoEvents();
+
+        ListViewGroup collapsedGroup = list.Groups[0];
+        collapsedGroup.CollapsedState.Should().Be(ListViewGroupCollapsedState.Collapsed);
+        // Simulate the native list being refreshed while the managed group still contains the old item.
+        SendMessage(list.Handle, ListViewDeleteItemMessage, new(14), IntPtr.Zero).Should().NotBe(IntPtr.Zero);
+
+        Action act = () => typeof(MultiRepositoryStatusView)
+            .GetMethod("GetGroupHeaderBounds", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(view, [collapsedGroup]);
+
+        act.Should().NotThrow();
+        form.Close();
     }
 
     [Test]
@@ -215,4 +281,7 @@ public sealed class MultiRepositoryStatusViewTests
 
     private static IEnumerable<string> RepositoryPaths(ListView list)
         => list.Items.Cast<ListViewItem>().Select(item => ((Repository)item.Tag!).Path);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr windowHandle, uint message, IntPtr messageParameter, IntPtr additionalParameter);
 }

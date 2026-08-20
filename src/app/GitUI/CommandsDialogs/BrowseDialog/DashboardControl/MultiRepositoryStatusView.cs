@@ -390,7 +390,12 @@ internal sealed class MultiRepositoryStatusView : GitExtensionsControl
 
     private void List_ColumnWidthChanged(object? sender, ColumnWidthChangedEventArgs e)
     {
-        if (_updatingColumns || _list.Columns[e.ColumnIndex].Tag is not MultiRepositoryStatusColumn column)
+        if (_updatingColumns || e.ColumnIndex < 0 || e.ColumnIndex >= _list.Columns.Count)
+        {
+            return;
+        }
+
+        if (_list.Columns[e.ColumnIndex].Tag is not MultiRepositoryStatusColumn column)
         {
             return;
         }
@@ -418,7 +423,12 @@ internal sealed class MultiRepositoryStatusView : GitExtensionsControl
 
     private void List_ColumnClick(object? sender, ColumnClickEventArgs e)
     {
-        if (!string.IsNullOrEmpty(_searchText) || _list.Columns[e.Column].Tag is not MultiRepositoryStatusColumn column)
+        if (!string.IsNullOrEmpty(_searchText) || e.Column < 0 || e.Column >= _list.Columns.Count)
+        {
+            return;
+        }
+
+        if (_list.Columns[e.Column].Tag is not MultiRepositoryStatusColumn column)
         {
             return;
         }
@@ -1317,8 +1327,9 @@ internal sealed class MultiRepositoryStatusView : GitExtensionsControl
 
         Rectangle groupBounds = _list.RectangleToClient(accessibilityObject.Bounds);
         int firstItemTop = group.Items.Cast<ListViewItem>()
-            .Where(item => item.Bounds != Rectangle.Empty)
-            .Select(item => item.Bounds.Top)
+            .Select(item => item.BoundsOrEmpty())
+            .Where(bounds => bounds != Rectangle.Empty)
+            .Select(bounds => bounds.Top)
             .DefaultIfEmpty(groupBounds.Top + DpiUtil.Scale(24))
             .Min();
         return new Rectangle(groupBounds.Left, groupBounds.Top, groupBounds.Width, Math.Max(DpiUtil.Scale(16), firstItemTop - groupBounds.Top));

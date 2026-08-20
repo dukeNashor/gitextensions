@@ -13,8 +13,8 @@
 // Version
 //
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 33,33,0,0
- PRODUCTVERSION 33,33,0,0
+ FILEVERSION 7,2,0,4
+ PRODUCTVERSION 7,2,0,4
  FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -29,12 +29,12 @@ BEGIN
     BEGIN
         BLOCK "040904B0"
         BEGIN
-            VALUE "FileVersion", "33.33.0"
+            VALUE "FileVersion", "7.2.0.4"
             VALUE "FileDescription", "Interactively ask for SSH password"
             VALUE "InternalName", "Git Extensions"
             VALUE "LegalCopyright", "Copyright 2013-2018"
             VALUE "OriginalFilename", "GitExtSshAskPass.exe"
-            VALUE "ProductVersion", "33.33.0"
+            VALUE "ProductVersion", "7.2.0-duke.4"
             VALUE "ProductName", "Git Extensions"
         END
     END

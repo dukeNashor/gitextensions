@@ -48,6 +48,19 @@ public sealed class MultiRepositoryStatusRepositoriesTests
     }
 
     [Test]
+    public void Combine_filters_invalid_stored_uncategorised_repository()
+    {
+        Repository invalidStored = new(@"C:\invalid-stored");
+
+        List<Repository> result = MultiRepositoryStatusRepositories.Combine(
+            [],
+            [invalidStored],
+            _ => false);
+
+        result.Should().BeEmpty();
+    }
+
+    [Test]
     public void Combine_keeps_categorised_order_and_recent_order()
     {
         Repository groupB = new(@"C:\group-b") { Category = "B" };

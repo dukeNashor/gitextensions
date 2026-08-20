@@ -6,8 +6,8 @@ Git Extensions Duke Edition 是基于官方 Git Extensions 的个人发行线。
 
 | 项目 | 当前值 |
 | --- | --- |
-| Duke 版版本 | `7.2.0-duke.2` |
-| Windows 文件版本 | `7.2.0.2` |
+| Duke 版版本 | `7.2.0-duke.4` |
+| Windows 文件版本 | `7.2.0.4` |
 | 官方跟踪分支 | `origin/release/7.0` |
 | 已吸收官方版本 | `v7.2.0` |
 | 官方基线提交 | `501f831ed25127e4a301b7649d5d4e6524f53bba` |

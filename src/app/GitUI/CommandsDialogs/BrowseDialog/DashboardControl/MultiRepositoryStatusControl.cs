@@ -418,8 +418,12 @@ internal sealed class MultiRepositoryStatusControl : GitExtensionsControl
         return MultiRepositoryStatusRepositories.Combine(
             await recentTask,
             await categorisedTask,
-            path => GitModule.IsValidGitWorkingDir(path) || GitModule.IsBareRepository(path));
+            IsOpenableRepository);
     }
+
+    internal static bool IsOpenableRepository(string path)
+        => Directory.Exists(path)
+           && (GitModule.IsValidGitWorkingDir(path) || GitModule.IsBareRepository(path));
 
     private void AddCategory(Repository repository)
     {
@@ -543,8 +547,15 @@ internal sealed class MultiRepositoryStatusControl : GitExtensionsControl
     private void OpenSelectedRepository()
     {
         Repository? repository = GetSelectedRepository();
-        if (repository is null || (!GitModule.IsValidGitWorkingDir(repository.Path) && !GitModule.IsBareRepository(repository.Path)))
+        if (repository is null || !IsOpenableRepository(repository.Path))
         {
+            if (repository is not null && !Directory.Exists(repository.Path))
+            {
+                this.InvokeAndForget(
+                    () => RefreshAllAsync(reloadRepositories: true),
+                    cancellationToken: _lifetimeCancellation.Token);
+            }
+
             return;
         }
 
